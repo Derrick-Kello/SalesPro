@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>POS - Cashier Register</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="nav-brand">POS System</div>
+    <div class="nav-links">
+      <span id="navUserName"></span>
+      <span id="navUserRole" class="role-badge"></span>
+      <button onclick="logout()" class="btn btn-sm btn-danger">Logout</button>
+    </div>
+  </nav>
+
+  <!-- Tab switcher for cashier -->
+  <div class="cashier-tabs">
+    <button class="cashier-tab active" id="tabRegister" onclick="switchTab('register')">Register</button>
+    <button class="cashier-tab" id="tabHistory" onclick="switchTab('history')">My Sales</button>
+  </div>
+
+  <!-- Register tab -->
+  <div id="tabContentRegister">
+    <div class="pos-layout">
+
+      <div class="pos-products">
+        <div class="search-bar">
+          <input type="text" id="barcodeInput" placeholder="Scan barcode or search product..." autofocus />
+          <button class="btn btn-primary" onclick="searchProducts()">Search</button>
+        </div>
+        <div class="category-filter" id="categoryFilter">
+          <button class="filter-btn active" onclick="filterCategory('all', this)">All</button>
+        </div>
+        <div class="product-grid" id="productGrid"></div>
+      </div>
+
+      <div class="pos-cart">
+        <div class="cart-header">
+          <h3>Current Sale</h3>
+          <div class="customer-select">
+            <select id="customerSelect">
+              <option value="">Walk-in Customer</option>
+            </select>
+            <button class="btn btn-sm btn-outline" onclick="openCustomerModal()">+ New</button>
+          </div>
+        </div>
+
+        <div class="cart-items" id="cartItems">
+          <div class="cart-empty">No items in cart</div>
+        </div>
+
+        <div class="cart-totals">
+          <div class="total-row">
+            <span>Subtotal</span>
+            <span id="subtotal">$0.00</span>
+          </div>
+          <div class="total-row">
+            <span>Discount ($)</span>
+            <div class="discount-input">
+              <input type="number" id="discountInput" value="0" min="0" step="0.01" onchange="recalculate()" />
+            </div>
+          </div>
+          <div class="total-row">
+            <span>Tax (10%)</span>
+            <span id="taxAmount">$0.00</span>
+          </div>
+          <div class="total-row grand-total">
+            <span>Total</span>
+            <span id="grandTotal">$0.00</span>
+          </div>
+        </div>
+
+        <div class="cart-actions">
+          <button class="btn btn-danger btn-full" onclick="clearCart()">Clear Cart</button>
+          <button class="btn btn-success btn-full" onclick="openCheckout()">Checkout</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sales history tab -->
+  <div id="tabContentHistory" class="hidden" style="padding:24px">
+    <div class="section-header" style="margin-bottom:12px">
+      <h2>Sales History</h2>
+      <div class="date-filters">
+        <input type="date" id="historyStartDate" />
+        <input type="date" id="historyEndDate" />
+        <button class="btn btn-outline" onclick="applyHistoryFilter()">Filter</button>
+      </div>
+    </div>
+
+    <!-- Sub-tabs: all sales vs only mine -->
+    <div class="report-tabs" style="margin-bottom:16px">
+      <button class="tab-btn history-sub-tab active" id="historyTabAll" onclick="showHistoryView('all', this)">All Sales</button>
+      <button class="tab-btn history-sub-tab" id="historyTabMine" onclick="showHistoryView('mine', this)">My Sales</button>
+    </div>
+
+    <div class="table-container">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Sale #</th><th>Date</th><th>Cashier</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Receipt</th>
+          </tr>
+        </thead>
+        <tbody id="historyTableBody">
+          <tr><td colspan="9" style="text-align:center;color:var(--text-muted)">Click a tab above to load sales</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Checkout modal -->
+  <div class="modal hidden" id="checkoutModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Complete Payment</h3>
+        <button class="modal-close" onclick="closeModal('checkoutModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="payment-summary">
+          <p>Total Amount: <strong id="checkoutTotal">$0.00</strong></p>
+        </div>
+        <div class="form-group">
+          <label>Payment Method</label>
+          <div class="payment-methods">
+            <button class="payment-btn active" data-method="CASH" onclick="selectPayment('CASH', this)">Cash</button>
+            <button class="payment-btn" data-method="MOBILE_MONEY" onclick="selectPayment('MOBILE_MONEY', this)">Mobile Money</button>
+            <button class="payment-btn" data-method="CARD" onclick="selectPayment('CARD', this)">Card</button>
+          </div>
+        </div>
+        <div class="form-group" id="amountPaidGroup">
+          <label>Amount Tendered</label>
+          <input type="number" id="amountPaid" placeholder="0.00" step="0.01" oninput="calculateChange()" />
+        </div>
+        <div class="form-group" id="referenceGroup" style="display:none">
+          <label>Reference / Transaction ID</label>
+          <input type="text" id="paymentReference" placeholder="Enter reference number" />
+        </div>
+        <div class="change-display hidden" id="changeDisplay">
+          <span>Change: </span><strong id="changeAmount">$0.00</strong>
+        </div>
+        <div id="checkoutError" class="error-message hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('checkoutModal')">Cancel</button>
+        <button class="btn btn-success" onclick="processPayment()">Confirm Payment</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receipt modal -->
+  <div class="modal hidden" id="receiptModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Receipt</h3>
+        <button class="modal-close" onclick="closeModal('receiptModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="receiptContent"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="printReceipt()">Print</button>
+        <button class="btn btn-primary" onclick="newSale()">New Sale</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Receipt reprint modal (from history) -->
+  <div class="modal hidden" id="reprintModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Receipt</h3>
+        <button class="modal-close" onclick="closeModal('reprintModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="reprintContent"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="printReceipt()">Print</button>
+        <button class="btn btn-primary" onclick="closeModal('reprintModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick customer registration modal -->
+  <div class="modal hidden" id="customerModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Register Customer</h3>
+        <button class="modal-close" onclick="closeModal('customerModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Full Name *</label>
+          <input type="text" id="newCustomerName" placeholder="Customer name" />
+        </div>
+        <div class="form-group">
+          <label>Phone</label>
+          <input type="text" id="newCustomerPhone" placeholder="Phone number" />
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="newCustomerEmail" placeholder="Email address" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('customerModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="registerCustomer()">Register</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/pos.js"></script>
+  <script src="js/cashier.js"></script>
+</body>
+</html>

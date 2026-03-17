@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>POS - Dashboard</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <nav class="navbar">
+    <div class="nav-brand">POS System</div>
+    <div class="nav-links">
+      <span id="navUserName"></span>
+      <span id="navUserRole" class="role-badge"></span>
+      <!-- Admins and managers manage the system but don't operate the register -->
+      <span style="font-size:12px;color:rgba(255,255,255,0.7)">Management View</span>
+      <button onclick="logout()" class="btn btn-sm btn-danger">Logout</button>
+    </div>
+  </nav>
+
+  <div class="dashboard-layout">
+    <aside class="sidebar">
+      <ul class="sidebar-menu">
+        <li><a href="#" class="active" onclick="showSection('overview', this)">Overview</a></li>
+        <li><a href="#" onclick="showSection('products', this)">Products</a></li>
+        <li><a href="#" onclick="showSection('inventory', this)">Inventory</a></li>
+        <li><a href="#" onclick="showSection('customers', this)">Customers</a></li>
+        <li><a href="#" onclick="showSection('sales', this)">Sales History</a></li>
+        <li><a href="#" onclick="showSection('reports', this)">Reports</a></li>
+        <li class="admin-only hidden" id="usersMenuLink">
+          <a href="#" onclick="showSection('users', this)">Users</a>
+        </li>
+      </ul>
+    </aside>
+
+    <main class="dashboard-main">
+
+      <!-- Overview -->
+      <section id="section-overview" class="dashboard-section">
+        <h2>Overview</h2>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Today's Revenue</div>
+            <div class="stat-value" id="statRevenue">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Transactions Today</div>
+            <div class="stat-value" id="statTransactions">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Total Products</div>
+            <div class="stat-value" id="statProducts">-</div>
+          </div>
+          <div class="stat-card warning">
+            <div class="stat-label">Low Stock Items</div>
+            <div class="stat-value" id="statLowStock">-</div>
+          </div>
+        </div>
+        <div class="overview-grid">
+          <div class="card">
+            <h3>Top Products Today</h3>
+            <div id="topProductsList"></div>
+          </div>
+          <div class="card">
+            <h3>Low Stock Alerts</h3>
+            <div id="lowStockList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Products -->
+      <section id="section-products" class="dashboard-section hidden">
+        <div class="section-header">
+          <h2>Products</h2>
+          <button class="btn btn-primary manager-only" onclick="openProductModal()">+ Add Product</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="productSearch" placeholder="Search products..." oninput="searchProductsAdmin()" />
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Name</th><th>Category</th><th>Price</th><th>Barcode</th><th>Stock</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="productsTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Inventory -->
+      <section id="section-inventory" class="dashboard-section hidden">
+        <div class="section-header">
+          <h2>Inventory</h2>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Product</th><th>Category</th><th>Stock</th><th>Alert Level</th><th>Supplier</th><th>Status</th><th class="manager-only">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Customers -->
+      <section id="section-customers" class="dashboard-section hidden">
+        <div class="section-header">
+          <h2>Customers</h2>
+          <button class="btn btn-primary" onclick="openCustomerFormModal()">+ Add Customer</button>
+        </div>
+        <div class="search-bar">
+          <input type="text" id="customerSearch" placeholder="Search customers..." oninput="searchCustomersAdmin()" />
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Phone</th><th>Email</th><th>Loyalty Points</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="customersTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Sales History -->
+      <section id="section-sales" class="dashboard-section hidden">
+        <div class="section-header">
+          <h2>Sales History</h2>
+          <div class="date-filters">
+            <input type="date" id="salesStartDate" />
+            <input type="date" id="salesEndDate" />
+            <button class="btn btn-outline" onclick="loadSales()">Filter</button>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Date</th><th>Cashier</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="salesTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Reports -->
+      <section id="section-reports" class="dashboard-section hidden">
+        <h2>Reports</h2>
+        <div class="report-tabs">
+          <button class="tab-btn active" onclick="showReport('daily', this)">Daily</button>
+          <button class="tab-btn" onclick="showReport('weekly', this)">Weekly</button>
+          <button class="tab-btn" onclick="showReport('products', this)">Products</button>
+          <button class="tab-btn" onclick="showReport('cashiers', this)">Cashiers</button>
+          <button class="tab-btn" onclick="showReport('inventory', this)">Inventory</button>
+        </div>
+        <div id="reportContent" class="report-content"></div>
+      </section>
+
+      <!-- Users (admin only) -->
+      <section id="section-users" class="dashboard-section hidden">
+        <div class="section-header">
+          <h2>User Management</h2>
+          <button class="btn btn-primary" onclick="openUserModal()">+ Add User</button>
+        </div>
+        <div class="table-container">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Full Name</th><th>Username</th><th>Role</th><th>Status</th><th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- Product modal -->
+  <div class="modal hidden" id="productModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="productModalTitle">Add Product</h3>
+        <button class="modal-close" onclick="closeModal('productModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="productId" />
+        <div class="form-row">
+          <div class="form-group">
+            <label>Product Name *</label>
+            <input type="text" id="productName" placeholder="Product name" />
+          </div>
+          <div class="form-group">
+            <label>Category *</label>
+            <input type="text" id="productCategory" placeholder="e.g. Beverages" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Price *</label>
+            <input type="number" id="productPrice" placeholder="0.00" step="0.01" min="0" />
+          </div>
+          <div class="form-group">
+            <label>Barcode</label>
+            <input type="text" id="productBarcode" placeholder="Barcode number" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Initial Stock</label>
+            <input type="number" id="productQuantity" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>Low Stock Alert</label>
+            <input type="number" id="productLowStock" placeholder="10" min="0" />
+          </div>
+        </div>
+ 
+        <div class="form-group">
+          <label>Supplier</label>
+          <input type="text" id="productSupplier" placeholder="Supplier name" />
+        </div>
+        <div class="form-group">
+          <label>Description</label>
+          <input type="text" id="productDescription" placeholder="Optional description" />
+        </div>
+        <div id="productError" class="error-message hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('productModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveProduct()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inventory adjustment modal -->
+  <div class="modal hidden" id="inventoryModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Adjust Stock</h3>
+        <button class="modal-close" onclick="closeModal('inventoryModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="invProductId" />
+        <p id="invProductName" class="modal-subtitle"></p>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Add Stock (restock)</label>
+            <input type="number" id="invAddQty" placeholder="Quantity to add" min="1" />
+          </div>
+          <div class="form-group">
+            <label>Set Stock (override)</label>
+            <input type="number" id="invSetQty" placeholder="Set exact quantity" min="0" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Supplier</label>
+          <input type="text" id="invSupplier" placeholder="Supplier name" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('inventoryModal')">Cancel</button>
+        <button class="btn btn-warning" onclick="setStock()">Set Stock</button>
+        <button class="btn btn-primary" onclick="addStock()">Add Stock</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Customer form modal -->
+  <div class="modal hidden" id="customerFormModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="customerFormTitle">Add Customer</h3>
+        <button class="modal-close" onclick="closeModal('customerFormModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="customerId" />
+        <div class="form-group">
+          <label>Full Name *</label>
+          <input type="text" id="customerName" placeholder="Full name" />
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Phone</label>
+            <input type="text" id="customerPhone" placeholder="Phone number" />
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="customerEmail" placeholder="Email address" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Address</label>
+          <input type="text" id="customerAddress" placeholder="Address" />
+        </div>
+        <div id="customerError" class="error-message hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('customerFormModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveCustomer()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- User management modal -->
+  <div class="modal hidden" id="userModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="userModalTitle">Add User</h3>
+        <button class="modal-close" onclick="closeModal('userModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="userId" />
+        <div class="form-row">
+          <div class="form-group">
+            <label>Full Name *</label>
+            <input type="text" id="userFullName" placeholder="Full name" />
+          </div>
+          <div class="form-group">
+            <label>Username *</label>
+            <input type="text" id="userUsername" placeholder="Username" />
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Password *</label>
+            <input type="password" id="userPassword" placeholder="Password" />
+          </div>
+          <div class="form-group">
+            <label>Role</label>
+            <select id="userRole">
+              <option value="CASHIER">Cashier</option>
+              <option value="MANAGER">Manager</option>
+              <option value="ADMIN">Admin</option>
+            </select>
+          </div>
+        </div>
+        <div id="userError" class="error-message hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('userModal')">Cancel</button>
+        <button class="btn btn-primary" onclick="saveUser()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sale detail modal -->
+  <div class="modal hidden" id="saleDetailModal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3>Sale Details</h3>
+        <button class="modal-close" onclick="closeModal('saleDetailModal')">&times;</button>
+      </div>
+      <div class="modal-body" id="saleDetailContent"></div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('saleDetailModal')">Close</button>
+        <button class="btn btn-warning manager-only" id="cancelSaleBtn" onclick="cancelSale()">Cancel Sale</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Customer purchase history modal -->
+  <div class="modal hidden" id="customerHistoryModal">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <h3 id="customerHistoryName">Purchase History</h3>
+        <button class="modal-close" onclick="closeModal('customerHistoryModal')">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="customerHistoryPoints" style="margin-bottom:14px;font-weight:600;color:var(--primary)"></p>
+        <table class="report-table">
+          <thead>
+            <tr><th>Sale #</th><th>Date</th><th>Total</th><th>Payment</th></tr>
+          </thead>
+          <tbody id="customerHistoryBody"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeModal('customerHistoryModal')">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/dashboard.js"></script>
+</body>
+</html>

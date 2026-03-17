@@ -1,0 +1,144 @@
+// This is the Prisma schema for the POS system.
+// It defines all the tables and their relationships.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Users who can log into the system - admins, managers, and cashiers
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  fullName  String
+  role      Role     @default(CASHIER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales Sale[]
+
+  @@map("users")
+}
+
+enum Role {
+  ADMIN
+  MANAGER
+  CASHIER
+}
+
+// Every product that can be sold in the store
+model Product {
+  id          Int      @id @default(autoincrement())
+  name        String
+  category    String
+  price       Float
+  barcode     String?  @unique
+  description String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inventory  Inventory?
+  saleItems  SaleItem[]
+
+  @@map("products")
+}
+
+// Tracks how much stock we have for each product
+model Inventory {
+  id            Int      @id @default(autoincrement())
+  productId     Int      @unique
+  quantity      Int      @default(0)
+  lowStockAlert Int      @default(10)
+  supplier      String?
+  updatedAt     DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("inventory")
+}
+
+// Customers who shop at the store
+model Customer {
+  id           Int      @id @default(autoincrement())
+  name         String
+  phone        String?  @unique
+  email        String?  @unique
+  address      String?
+  loyaltyPoints Int     @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  sales Sale[]
+
+  @@map("customers")
+}
+
+// A single sale transaction
+model Sale {
+  id            Int           @id @default(autoincrement())
+  userId        Int
+  customerId    Int?
+  totalAmount   Float
+  discount      Float         @default(0)
+  tax           Float         @default(0)
+  grandTotal    Float
+  status        SaleStatus    @default(COMPLETED)
+  createdAt     DateTime      @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  saleItems SaleItem[]
+  payment   Payment?
+
+  @@map("sales")
+}
+
+enum SaleStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+// Each line item inside a sale
+model SaleItem {
+  id        Int   @id @default(autoincrement())
+  saleId    Int
+  productId Int
+  quantity  Int
+  unitPrice Float
+  subtotal  Float
+
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("sale_items")
+}
+
+// Payment record for each completed sale
+model Payment {
+  id            Int           @id @default(autoincrement())
+  saleId        Int           @unique
+  method        PaymentMethod
+  amountPaid    Float
+  change        Float         @default(0)
+  reference     String?
+  createdAt     DateTime      @default(now())
+
+  sale Sale @relation(fields: [saleId], references: [id])
+
+  @@map("payments")
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+  CARD
+}
