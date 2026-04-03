@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import Modal from '../Modal'
+import { Printer, Filter } from 'lucide-react'
 
 const STORE_NAME = 'My Store'
 
 export default function CashierSales() {
-  const [view, setView] = useState('all') // 'all' or 'mine'
-  const [sales, setSales] = useState([])
+  const [view, setView]           = useState('all')
+  const [sales, setSales]         = useState([])
   const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [endDate, setEndDate]     = useState('')
+  const [loading, setLoading]     = useState(false)
   const [receiptSale, setReceiptSale] = useState(null)
   const [receiptOpen, setReceiptOpen] = useState(false)
 
@@ -19,7 +20,7 @@ export default function CashierSales() {
       const params = new URLSearchParams()
       if (currentView === 'mine') params.append('mine', 'true')
       if (startDate) params.append('startDate', startDate)
-      if (endDate) params.append('endDate', endDate)
+      if (endDate)   params.append('endDate', endDate)
       const data = await api.get(`/sales${params.toString() ? '?' + params : ''}`)
       setSales(data)
     } catch (err) {
@@ -31,69 +32,70 @@ export default function CashierSales() {
 
   useEffect(() => { load(view) }, [view])
 
-  function switchView(v) {
-    setView(v)
-  }
-
   async function openReceipt(id) {
     try {
       const sale = await api.get(`/sales/${id}`)
-      setReceiptSale(sale)
-      setReceiptOpen(true)
-    } catch (err) { alert('Could not load receipt') }
+      setReceiptSale(sale); setReceiptOpen(true)
+    } catch { alert('Could not load receipt') }
   }
 
-  const statusClass = s => s === 'COMPLETED' ? 'badge-success' : s === 'CANCELLED' ? 'badge-danger' : 'badge-warning'
+  const statusClass = s =>
+    s === 'COMPLETED' ? 'badge-success' :
+    s === 'CANCELLED' ? 'badge-danger'  : 'badge-warning'
 
   return (
-    <div style={{ padding: 24 }}>
-      <div className="section-header" style={{ marginBottom: 12 }}>
+    <div style={{ padding: '20px 24px' }}>
+      <div className="section-header" style={{ marginBottom: 16 }}>
         <h2>Sales History</h2>
         <div className="date-filters">
           <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-          <button className="btn btn-outline" onClick={() => load(view)}>Filter</button>
+          <input type="date" value={endDate}   onChange={e => setEndDate(e.target.value)} />
+          <button className="btn btn-outline" onClick={() => load(view)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Filter size={13} strokeWidth={2} /> Filter
+          </button>
         </div>
       </div>
 
-      {/* All Sales / My Sales toggle */}
       <div className="history-sub-tabs">
-        <button className={`history-sub-tab${view === 'all' ? ' active' : ''}`} onClick={() => switchView('all')}>
-          All Sales
-        </button>
-        <button className={`history-sub-tab${view === 'mine' ? ' active' : ''}`} onClick={() => switchView('mine')}>
-          My Sales
-        </button>
+        <button className={`history-sub-tab${view === 'all'  ? ' active' : ''}`} onClick={() => setView('all')}>All Sales</button>
+        <button className={`history-sub-tab${view === 'mine' ? ' active' : ''}`} onClick={() => setView('mine')}>My Sales</button>
       </div>
 
       <div className="table-container">
         <table className="data-table">
           <thead>
             <tr>
-              <th>Sale #</th><th>Date</th><th>Cashier</th><th>Customer</th>
-              <th>Items</th><th>Total</th><th>Payment</th><th>Status</th><th>Receipt</th>
+              <th>Sale #</th>
+              <th>Date</th>
+              <th>Cashier</th>
+              <th>Customer</th>
+              <th>Items</th>
+              <th>Total</th>
+              <th>Payment</th>
+              <th>Status</th>
+              <th>Receipt</th>
             </tr>
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
             )}
             {!loading && sales.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No sales found</td></tr>
+              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
             )}
             {!loading && sales.map(s => (
               <tr key={s.id}>
-                <td>#{s.id}</td>
-                <td>{new Date(s.createdAt).toLocaleString()}</td>
+                <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
+                <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td>{s.user.fullName}</td>
-                <td>{s.customer?.name || 'Walk-in'}</td>
-                <td>{s.saleItems?.length ?? 0} item(s)</td>
-                <td>${s.grandTotal.toFixed(2)}</td>
-                <td>{s.payment?.method?.replace('_', ' ') || '-'}</td>
+                <td>{s.customer?.name || <span style={{ color: 'var(--text-light)' }}>Walk-in</span>}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.saleItems?.length ?? 0}</td>
+                <td style={{ fontWeight: 700 }}>${s.grandTotal.toFixed(2)}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                 <td><span className={`badge ${statusClass(s.status)}`}>{s.status}</span></td>
                 <td>
-                  <button className="btn btn-sm btn-outline" onClick={() => openReceipt(s.id)}>
-                    Receipt
+                  <button className="btn btn-sm btn-outline" onClick={() => openReceipt(s.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                    <Printer size={12} strokeWidth={2} /> Receipt
                   </button>
                 </td>
               </tr>
@@ -102,15 +104,18 @@ export default function CashierSales() {
         </table>
       </div>
 
-      {/* Receipt reprint modal */}
       {receiptOpen && receiptSale && (
         <Modal
-          title="Receipt"
+          title="Receipt Reprint"
           onClose={() => setReceiptOpen(false)}
-          footer={<>
-            <button className="btn btn-outline" onClick={() => window.print()}>Print</button>
-            <button className="btn btn-primary" onClick={() => setReceiptOpen(false)}>Close</button>
-          </>}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <Printer size={14} strokeWidth={2} /> Print
+              </button>
+              <button className="btn btn-primary" onClick={() => setReceiptOpen(false)}>Close</button>
+            </>
+          }
         >
           <div className="receipt">
             <div className="receipt-header">

@@ -1,3 +1,4 @@
 {
-    "javascript.autoClosingTags": false
+    "javascript.autoClosingTags": false,
+    "snyk.advanced.autoSelectOrganization": true
 }
