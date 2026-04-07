@@ -1,7 +1,8 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
 import Modal from '../Modal'
-import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X } from 'lucide-react'
+import BarcodeDisplay from '../BarcodeDisplay'
+import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode } from 'lucide-react'
 
 const STORE_NAME = 'My Store'
 const TAX_RATE   = 0.10
@@ -30,6 +31,9 @@ export default function Register() {
   const [payRef, setPayRef]             = useState('')
   const [checkoutError, setCheckoutError] = useState('')
   const [newCust, setNewCust]           = useState({ name: '', phone: '', email: '' })
+  const [barcodePreview, setBarcodePreview] = useState(null)
+  const scanTimerRef = useRef(null)
+  const lastKeyTime  = useRef(0)
 
   const loadProducts = useCallback(async () => {
     try { setAllProducts(await api.get('/products')) } catch (err) { console.error(err.message) }
@@ -60,6 +64,33 @@ export default function Register() {
       addToCart(product)
       setSearch('')
     } catch (_) {}
+  }
+
+  // Detect hardware scanner: keys arrive < 50ms apart, auto-submit after 100ms idle
+  function handleScannerInput(e) {
+    const now = Date.now()
+    const delta = now - lastKeyTime.current
+    lastKeyTime.current = now
+
+    if (e.key === 'Enter') {
+      clearTimeout(scanTimerRef.current)
+      handleBarcodeEnter(e)
+      return
+    }
+
+    // If keys are coming in fast (scanner speed), set a short auto-submit timer
+    if (delta < 50) {
+      clearTimeout(scanTimerRef.current)
+      scanTimerRef.current = setTimeout(async () => {
+        const val = e.target.value
+        if (!val.trim()) return
+        try {
+          const product = await api.get('/products/barcode/' + encodeURIComponent(val.trim()))
+          addToCart(product)
+          setSearch('')
+        } catch (_) {}
+      }, 100)
+    }
   }
 
   function addToCart(product) {
@@ -164,7 +195,7 @@ export default function Register() {
             <input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              onKeyDown={handleBarcodeEnter}
+              onKeyDown={handleScannerInput}
               placeholder="Scan barcode or search product…"
               autoFocus
               style={{ paddingLeft: 36 }}
@@ -200,6 +231,16 @@ export default function Register() {
                 <div className="product-stock">
                   {stock === 0 ? 'Out of stock' : `${stock} in stock`}
                 </div>
+                {p.barcode && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ marginTop: 4, fontSize: 10, padding: '2px 6px', opacity: 0.6 }}
+                    onClick={e => { e.stopPropagation(); setBarcodePreview(p) }}
+                    title="View barcode"
+                  >
+                    <Barcode size={11} strokeWidth={2} />
+                  </button>
+                )}
               </div>
             )
           })}
@@ -462,6 +503,19 @@ export default function Register() {
             <label>Email</label>
             <input type="email" value={newCust.email} onChange={e => setNewCust(f => ({ ...f, email: e.target.value }))} placeholder="customer@email.com" />
           </div>
+        </Modal>
+      )}
+      {/* ── Barcode Preview Modal ── */}
+      {barcodePreview && (
+        <Modal
+          title={barcodePreview.name}
+          onClose={() => setBarcodePreview(null)}
+          footer={<button className="btn btn-primary" onClick={() => setBarcodePreview(null)}>Close</button>}
+        >
+          <p style={{ textAlign: 'center', color: 'var(--text-muted)', marginBottom: 8 }}>
+            UPC-A: <strong style={{ fontFamily: 'monospace' }}>{barcodePreview.barcode}</strong>
+          </p>
+          <BarcodeDisplay value={barcodePreview.barcode} />
         </Modal>
       )}
     </div>

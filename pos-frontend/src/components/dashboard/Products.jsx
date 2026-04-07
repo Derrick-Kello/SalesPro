@@ -2,7 +2,18 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import Modal from '../Modal'
-import { Plus, Pencil, Trash2, Search } from 'lucide-react'
+import BarcodeDisplay from '../BarcodeDisplay'
+import BarcodePrintSheet from '../BarcodePrintSheet'
+import { Plus, Pencil, Trash2, Search, Barcode, Printer } from 'lucide-react'
+
+// Generate a valid UPC-A (12-digit) code with correct check digit
+function generateUPCA() {
+  const digits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10))
+  const oddSum = digits[0] + digits[2] + digits[4] + digits[6] + digits[8] + digits[10]
+  const evenSum = digits[1] + digits[3] + digits[5] + digits[7] + digits[9]
+  const check = (10 - ((oddSum * 3 + evenSum) % 10)) % 10
+  return [...digits, check].join('')
+}
 
 const EMPTY = {
   name: '', category: '', price: '', barcode: '',
@@ -18,6 +29,7 @@ export default function Products() {
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
   const [error, setError] = useState('')
+  const [printOpen, setPrintOpen] = useState(false)
 
   async function load() {
     const data = await api.get('/products')
@@ -68,11 +80,16 @@ export default function Products() {
     <div>
       <div className="section-header">
         <h2>Products</h2>
-        {canEdit && (
-          <button className="btn btn-primary" onClick={openAdd}>
-            <Plus size={15} strokeWidth={2.5} /> Add Product
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-outline" onClick={() => setPrintOpen(true)} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Printer size={14} strokeWidth={2} /> Print Barcodes
           </button>
-        )}
+          {canEdit && (
+            <button className="btn btn-primary" onClick={openAdd}>
+              <Plus size={15} strokeWidth={2.5} /> Add Product
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="search-bar">
@@ -172,8 +189,26 @@ export default function Products() {
               <input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0.00" />
             </div>
             <div className="form-group">
-              <label>Barcode</label>
-              <input value={form.barcode} onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))} placeholder="SKU / barcode" />
+              <label>Barcode (UPC-A)</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <input
+                  value={form.barcode}
+                  onChange={e => setForm(f => ({ ...f, barcode: e.target.value }))}
+                  placeholder="12-digit UPC-A"
+                  maxLength={12}
+                  style={{ flex: 1 }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  onClick={() => setForm(f => ({ ...f, barcode: generateUPCA() }))}
+                  title="Generate UPC-A"
+                  style={{ display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}
+                >
+                  <Barcode size={14} strokeWidth={2} /> Generate
+                </button>
+              </div>
+              <BarcodeDisplay value={form.barcode} />
             </div>
           </div>
           <div className="form-row">
@@ -198,6 +233,9 @@ export default function Products() {
           </div>
           {error && <div className="error-message">{error}</div>}
         </Modal>
+      )}
+      {printOpen && (
+        <BarcodePrintSheet products={products} onClose={() => setPrintOpen(false)} />
       )}
     </div>
   )

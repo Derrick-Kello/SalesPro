@@ -1478,6 +1478,10 @@ body {
 /* ————————————————————————————————
    RESPONSIVE
 ———————————————————————————————— */
+
+/* Hamburger button — hidden on desktop, shown on mobile */
+.nav-menu-btn { display: none; }
+
 @media (max-width: 1024px) {
   .sidebar { width: 200px; }
 }
@@ -1489,4 +1493,141 @@ body {
   .pos-layout { grid-template-columns: 1fr; }
   .overview-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 768px) {
+  /* —— Navbar —— */
+  .navbar { padding: 0 14px; }
+  .nav-user-info { display: none; }
+  .nav-menu-btn { display: inline-flex; }
+
+  /* —— Sidebar: slide-out overlay drawer —— */
+  .sidebar {
+    position: fixed;
+    top: var(--navbar-height);
+    left: -280px;
+    height: calc(100vh - var(--navbar-height));
+    width: 260px !important;
+    z-index: 150;
+    transition: left var(--t-md);
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar.mobile-open { left: 0; }
+
+  .sidebar-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    top: var(--navbar-height);
+    background: rgba(0,0,0,0.35);
+    z-index: 149;
+  }
+  .sidebar-overlay.mobile-open { display: block; }
+
+  /* —— Dashboard —— */
+  .dashboard-layout { height: auto; min-height: calc(100vh - var(--navbar-height)); }
+  .dashboard-main { padding: 16px; }
+  .dashboard-main h2 { font-size: 18px; margin-bottom: 16px; }
+  .section-header { flex-wrap: wrap; gap: 10px; }
+
+  /* —— POS register: two-row stacked layout —— */
+  .pos-layout { grid-template-columns: 1fr; height: auto; }
+  .pos-products { height: 52vh; }
+  .pos-cart { height: 48vh; border-left: none; border-top: 1px solid var(--border); }
+
+  /* —— Tables: horizontal scroll —— */
+  .table-container { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* —— Modal: bottom sheet on mobile —— */
+  .modal { align-items: flex-end; padding: 0; }
+  .modal-content {
+    max-width: 100% !important;
+    width: 100%;
+    margin: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 90vh;
+  }
+  .modal-header { border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+  .modal-body { padding: 16px; }
+  .modal-footer { padding: 12px 16px; }
+
+  /* —— Login —— */
+  .login-form-panel { padding: 32px 20px; }
+}
+
+@media (max-width: 480px) {
+  .navbar { padding: 0 12px; }
+  .dashboard-main { padding: 12px; }
+  .pos-products { height: 55vh; }
+  .pos-cart { height: 45vh; }
+  .cashier-tabs { padding: 0 12px; }
+  .cashier-tab { padding: 12px 14px; font-size: 13px; }
+}
+
+/* ── Barcode Label Print Sheet ── */
+.barcode-print-sheet {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background: #fff;
+}
+
+.barcode-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 160px;
+  padding: 8px 6px 6px;
+  border: 1px dashed #ccc;
+  border-radius: 4px;
+  background: #fff;
+  gap: 2px;
+}
+
+.barcode-label-name {
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  color: #111;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.barcode-label-price {
+  font-size: 11px;
+  font-weight: 700;
+  color: #111;
+}
+
+@media print {
+  body > * { display: none !important; }
+
+  /* Show only the print sheet inside the modal */
+  .modal-overlay,
+  .modal-overlay * { display: revert !important; }
+
+  .modal-overlay .modal-header,
+  .modal-overlay .modal-footer,
+  .modal-overlay .modal-close,
+  .modal-overlay > .modal > *:not(.modal-body) { display: none !important; }
+
+  .modal-overlay .modal-body .barcode-print-sheet {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0;
+  }
+
+  /* Hide the selection list, only show the print sheet */
+  .modal-overlay .modal-body > *:not(.barcode-print-sheet) { display: none !important; }
+
+  .barcode-label {
+    border: 1px solid #999;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
 }

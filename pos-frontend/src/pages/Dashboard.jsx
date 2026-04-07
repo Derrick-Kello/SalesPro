@@ -16,6 +16,7 @@ import {
   Receipt,
   BarChart3,
   UserCog,
+  Menu,
 } from 'lucide-react'
 
 const SECTIONS = [
@@ -41,15 +42,30 @@ const COMPONENTS = {
 export default function Dashboard() {
   const { user } = useAuth()
   const [active, setActive] = useState('overview')
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const Section = COMPONENTS[active]
 
   const visible = SECTIONS.filter(s => s.roles.includes(user?.role))
 
+  function closeSidebar() { setSidebarOpen(false) }
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
-      <Navbar />
+      <Navbar extra={
+        <button
+          className="btn btn-ghost btn-sm btn-icon nav-menu-btn"
+          onClick={() => setSidebarOpen(o => !o)}
+          aria-label="Toggle menu"
+        >
+          <Menu size={18} strokeWidth={2} />
+        </button>
+      } />
       <div className="dashboard-layout">
-        <aside className="sidebar">
+        <div
+          className={`sidebar-overlay${sidebarOpen ? ' mobile-open' : ''}`}
+          onClick={closeSidebar}
+        />
+        <aside className={`sidebar${sidebarOpen ? ' mobile-open' : ''}`}>
           <div className="sidebar-section-label" style={{ marginTop: 4 }}>Menu</div>
           <ul className="sidebar-menu">
             {visible.map(s => {
@@ -59,7 +75,7 @@ export default function Dashboard() {
                   <a
                     href="#"
                     className={active === s.key ? 'active' : ''}
-                    onClick={e => { e.preventDefault(); setActive(s.key) }}
+                    onClick={e => { e.preventDefault(); setActive(s.key); closeSidebar() }}
                   >
                     <Icon size={16} className="sidebar-icon" strokeWidth={active === s.key ? 2.2 : 1.8} />
                     {s.label}
