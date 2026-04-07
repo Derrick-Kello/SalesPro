@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
+    "postinstall": "prisma generate",
     "migrate": "prisma migrate dev",
     "generate": "prisma generate",
     "seed": "node prisma/seed.js"
