@@ -4,24 +4,22 @@
 const express = require("express");
 const prisma = require("../prisma/client");
 const { authenticate, authorize } = require("../middleware/auth");
+const { invalidate } = require("../cache");
+const { resolveBranchId } = require("../utils/branchScope");
 
 const router = express.Router();
-
 router.use(authenticate);
 
-// Get sales - admins and managers see all, cashiers can see all sales too
-// but can also filter to just their own using ?mine=true
+// Get sales - scoped by branch
 router.get("/", async (req, res) => {
   try {
     const { startDate, endDate, status, mine } = req.query;
+    const branchId = resolveBranchId(req);
 
     const where = {};
     if (status) where.status = status;
-
-    // When a cashier passes ?mine=true they only see their own sales
-    if (mine === "true") {
-      where.userId = req.user.id;
-    }
+    if (mine === "true") where.userId = req.user.id;
+    if (branchId) where.branchId = branchId;
 
     if (startDate || endDate) {
       where.createdAt = {};
@@ -38,6 +36,7 @@ router.get("/", async (req, res) => {
       include: {
         user: { select: { fullName: true, username: true } },
         customer: { select: { name: true, phone: true } },
+        branch: { select: { name: true } },
         payment: true,
         saleItems: { include: { product: { select: { name: true } } } },
       },
@@ -49,7 +48,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// Get a single sale with all its details - used for receipt printing
+// Get a single sale with all its details
 router.get("/:id", async (req, res) => {
   try {
     const sale = await prisma.sale.findUnique({
@@ -57,6 +56,7 @@ router.get("/:id", async (req, res) => {
       include: {
         user: { select: { fullName: true, username: true } },
         customer: { select: { name: true, phone: true, email: true } },
+        branch: { select: { name: true } },
         payment: true,
         saleItems: { include: { product: true } },
       },
@@ -68,8 +68,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// Process a new sale - cashiers only, admins and managers don't operate the register
-router.post("/", authorize("CASHIER"), async (req, res) => {
+// Process a new sale
+router.post("/", async (req, res) => {
   const { customerId, items, discount, tax, paymentMethod, amountPaid, paymentReference } = req.body;
 
   if (!items || items.length === 0) {
@@ -79,26 +79,36 @@ router.post("/", authorize("CASHIER"), async (req, res) => {
     return res.status(400).json({ error: "Payment method is required" });
   }
 
+  const branchId = req.user.branchId ?? null;
+  if (!branchId) {
+    return res.status(400).json({ error: "User is not assigned to a branch" });
+  }
+
   try {
-    // Fetch all products in the cart to get their current prices
     const productIds = items.map((i) => i.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
-      include: { inventory: true },
     });
 
-    // Make sure every product exists and has enough stock
+    // Check branch inventory for each item
+    const branchInventories = await prisma.branchInventory.findMany({
+      where: {
+        branchId,
+        productId: { in: productIds },
+      },
+    });
+
     for (const item of items) {
       const product = products.find((p) => p.id === item.productId);
       if (!product) {
         return res.status(404).json({ error: `Product ID ${item.productId} not found` });
       }
-      if (!product.inventory || product.inventory.quantity < item.quantity) {
+      const inv = branchInventories.find((i) => i.productId === item.productId);
+      if (!inv || inv.quantity < item.quantity) {
         return res.status(400).json({ error: `Not enough stock for ${product.name}` });
       }
     }
 
-    // Calculate the totals
     let totalAmount = 0;
     const saleItemsData = items.map((item) => {
       const product = products.find((p) => p.id === item.productId);
@@ -117,13 +127,12 @@ router.post("/", authorize("CASHIER"), async (req, res) => {
     const grandTotal = totalAmount - discountAmount + taxAmount;
     const change = (parseFloat(amountPaid) || 0) - grandTotal;
 
-    // Run everything in a transaction so if anything fails, nothing gets saved
     const sale = await prisma.$transaction(async (tx) => {
-      // Create the sale record
       const newSale = await tx.sale.create({
         data: {
           userId: req.user.id,
           customerId: customerId ? parseInt(customerId) : null,
+          branchId,
           totalAmount,
           discount: discountAmount,
           tax: taxAmount,
@@ -131,55 +140,49 @@ router.post("/", authorize("CASHIER"), async (req, res) => {
           status: "COMPLETED",
           saleItems: { create: saleItemsData },
         },
-        include: {
-          saleItems: { include: { product: true } },
-          user: { select: { fullName: true } },
-          customer: true,
-        },
+        select: { id: true },
       });
 
-      // Record the payment
-      await tx.payment.create({
-        data: {
-          saleId: newSale.id,
-          method: paymentMethod,
-          amountPaid: parseFloat(amountPaid) || grandTotal,
-          change: change > 0 ? change : 0,
-          reference: paymentReference,
-        },
-      });
-
-      // Deduct stock for each item sold
-      for (const item of items) {
-        await tx.inventory.update({
-          where: { productId: item.productId },
-          data: { quantity: { decrement: item.quantity } },
-        });
-      }
-
-      // Add loyalty points to the customer if one was selected (1 point per dollar)
-      if (customerId) {
-        await tx.customer.update({
-          where: { id: parseInt(customerId) },
-          data: { loyaltyPoints: { increment: Math.floor(grandTotal) } },
-        });
-      }
+      await Promise.all([
+        tx.payment.create({
+          data: {
+            saleId: newSale.id,
+            method: paymentMethod,
+            amountPaid: parseFloat(amountPaid) || grandTotal,
+            change: change > 0 ? change : 0,
+            reference: paymentReference,
+          },
+        }),
+        ...items.map(item =>
+          tx.branchInventory.update({
+            where: { branchId_productId: { branchId, productId: item.productId } },
+            data: { quantity: { decrement: item.quantity } },
+          })
+        ),
+        ...(customerId ? [
+          tx.customer.update({
+            where: { id: parseInt(customerId) },
+            data: { loyaltyPoints: { increment: Math.floor(grandTotal) } },
+          })
+        ] : []),
+      ]);
 
       return newSale;
-    });
+    }, { timeout: 15000 });
 
-    // Fetch the complete sale with payment info to return
     const completeSale = await prisma.sale.findUnique({
       where: { id: sale.id },
       include: {
         saleItems: { include: { product: true } },
         user: { select: { fullName: true, username: true } },
         customer: true,
+        branch: { select: { name: true } },
         payment: true,
       },
     });
 
     res.status(201).json(completeSale);
+    invalidate("overview-stats");
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Sale processing failed" });
@@ -201,17 +204,20 @@ router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), async (req, res) => {
       return res.status(400).json({ error: "Only completed sales can be cancelled" });
     }
 
-    // Cancel the sale and restore the stock in one transaction
     await prisma.$transaction(async (tx) => {
       await tx.sale.update({ where: { id }, data: { status: "CANCELLED" } });
 
-      for (const item of sale.saleItems) {
-        await tx.inventory.update({
-          where: { productId: item.productId },
-          data: { quantity: { increment: item.quantity } },
-        });
+      if (sale.branchId) {
+        await Promise.all(
+          sale.saleItems.map(item =>
+            tx.branchInventory.update({
+              where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
+              data: { quantity: { increment: item.quantity } },
+            })
+          )
+        );
       }
-    });
+    }, { timeout: 15000 });
 
     res.json({ message: "Sale cancelled and stock restored" });
   } catch (err) {

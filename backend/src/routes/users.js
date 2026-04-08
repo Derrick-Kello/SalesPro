@@ -14,7 +14,7 @@ router.use(authenticate);
 router.get("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      select: { id: true, username: true, fullName: true, role: true, isActive: true, createdAt: true },
+      select: { id: true, username: true, fullName: true, role: true, isActive: true, createdAt: true, branchId: true },
       orderBy: { createdAt: "desc" },
     });
     res.json(users);
@@ -25,7 +25,7 @@ router.get("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
 
 // Create a new user account
 router.post("/", authorize("ADMIN"), async (req, res) => {
-  const { username, password, fullName, role } = req.body;
+  const { username, password, fullName, role, branchId } = req.body;
 
   if (!username || !password || !fullName) {
     return res.status(400).json({ error: "Username, password, and full name are required" });
@@ -34,8 +34,8 @@ router.post("/", authorize("ADMIN"), async (req, res) => {
   try {
     const hashed = await bcrypt.hash(password, 10);
     const user = await prisma.user.create({
-      data: { username, password: hashed, fullName, role: role || "CASHIER" },
-      select: { id: true, username: true, fullName: true, role: true },
+      data: { username, password: hashed, fullName, role: role || "CASHIER", branchId: branchId ? parseInt(branchId) : null },
+      select: { id: true, username: true, fullName: true, role: true, branchId: true },
     });
     res.status(201).json(user);
   } catch (err) {
@@ -48,7 +48,7 @@ router.post("/", authorize("ADMIN"), async (req, res) => {
 
 // Update a users details or reset their password
 router.put("/:id", authorize("ADMIN"), async (req, res) => {
-  const { fullName, role, password, isActive } = req.body;
+  const { fullName, role, password, isActive, branchId } = req.body;
   const id = parseInt(req.params.id);
 
   try {
@@ -57,11 +57,12 @@ router.put("/:id", authorize("ADMIN"), async (req, res) => {
     if (role) data.role = role;
     if (isActive !== undefined) data.isActive = isActive;
     if (password) data.password = await bcrypt.hash(password, 10);
+    if (branchId !== undefined) data.branchId = branchId ? parseInt(branchId) : null;
 
     const user = await prisma.user.update({
       where: { id },
       data,
-      select: { id: true, username: true, fullName: true, role: true, isActive: true },
+      select: { id: true, username: true, fullName: true, role: true, isActive: true, branchId: true },
     });
     res.json(user);
   } catch (err) {

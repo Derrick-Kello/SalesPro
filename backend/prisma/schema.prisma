@@ -11,6 +11,82 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Branch model - represents a retail location
+model Branch {
+  id        Int      @id @default(autoincrement())
+  name      String
+  location  String?
+  phone     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  users           User[]
+  sales           Sale[]
+  expenses        Expense[]
+  branchInventory BranchInventory[]
+  warehouses      Warehouse[]
+  transfersFrom   StockTransfer[]   @relation("FromBranch")
+  transfersTo     StockTransfer[]   @relation("ToBranch")
+  products        Product[]         @relation("ProductBranches")
+
+  @@map("branches")
+}
+
+// Warehouse model - physical storage location
+model Warehouse {
+  id        Int      @id @default(autoincrement())
+  name      String
+  location  String?
+  branchId  Int?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  branch        Branch?         @relation(fields: [branchId], references: [id])
+  transfersFrom StockTransfer[] @relation("FromWarehouse")
+  transfersTo   StockTransfer[] @relation("ToWarehouse")
+
+  @@map("warehouses")
+}
+
+// BranchInventory - stock per product per branch
+model BranchInventory {
+  id            Int      @id @default(autoincrement())
+  branchId      Int
+  productId     Int
+  quantity      Int      @default(0)
+  lowStockAlert Int      @default(10)
+  supplier      String?
+
+  branch  Branch  @relation(fields: [branchId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([branchId, productId])
+  @@map("branch_inventory")
+}
+
+// StockTransfer - record of stock movement between branches/warehouses
+model StockTransfer {
+  id               Int      @id @default(autoincrement())
+  productId        Int
+  quantity         Int
+  fromBranchId     Int?
+  fromWarehouseId  Int?
+  toBranchId       Int?
+  toWarehouseId    Int?
+  transferredById  Int
+  note             String?
+  createdAt        DateTime @default(now())
+
+  product        Product   @relation(fields: [productId], references: [id])
+  fromBranch     Branch?   @relation("FromBranch", fields: [fromBranchId], references: [id])
+  fromWarehouse  Warehouse? @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
+  toBranch       Branch?   @relation("ToBranch", fields: [toBranchId], references: [id])
+  toWarehouse    Warehouse? @relation("ToWarehouse", fields: [toWarehouseId], references: [id])
+  transferredBy  User      @relation(fields: [transferredById], references: [id])
+
+  @@map("stock_transfers")
+}
+
 // Users who can log into the system - admins, managers, and cashiers
 model User {
   id        Int      @id @default(autoincrement())
@@ -19,10 +95,13 @@ model User {
   fullName  String
   role      Role     @default(CASHIER)
   isActive  Boolean  @default(true)
+  branchId  Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  sales Sale[]
+  branch        Branch?         @relation(fields: [branchId], references: [id])
+  sales         Sale[]
+  stockTransfers StockTransfer[]
 
   @@map("users")
 }
@@ -45,8 +124,11 @@ model Product {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  inventory  Inventory?
-  saleItems  SaleItem[]
+  inventory       Inventory?
+  branchInventory BranchInventory[]
+  saleItems       SaleItem[]
+  stockTransfers  StockTransfer[]
+  branches        Branch[]         @relation("ProductBranches")
 
   @@map("products")
 }
@@ -86,6 +168,7 @@ model Sale {
   id            Int           @id @default(autoincrement())
   userId        Int
   customerId    Int?
+  branchId      Int?
   totalAmount   Float
   discount      Float         @default(0)
   tax           Float         @default(0)
@@ -95,6 +178,7 @@ model Sale {
 
   user      User      @relation(fields: [userId], references: [id])
   customer  Customer? @relation(fields: [customerId], references: [id])
+  branch    Branch?   @relation(fields: [branchId], references: [id])
   saleItems SaleItem[]
   payment   Payment?
 
@@ -142,4 +226,47 @@ enum PaymentMethod {
   CASH
   MOBILE_MONEY
   CARD
+}
+
+// Suppliers who provide products to the store
+model Supplier {
+  id          Int      @id @default(autoincrement())
+  name        String
+  phone       String?
+  email       String?
+  address     String?
+  company     String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("suppliers")
+}
+
+// Expense categories
+model ExpenseCategory {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique
+  createdAt DateTime  @default(now())
+
+  expenses  Expense[]
+
+  @@map("expense_categories")
+}
+
+// Business expenses
+model Expense {
+  id          Int             @id @default(autoincrement())
+  title       String
+  amount      Float
+  categoryId  Int
+  branchId    Int?
+  note        String?
+  date        DateTime        @default(now())
+  createdAt   DateTime        @default(now())
+
+  category    ExpenseCategory @relation(fields: [categoryId], references: [id])
+  branch      Branch?         @relation(fields: [branchId], references: [id])
+
+  @@map("expenses")
 }

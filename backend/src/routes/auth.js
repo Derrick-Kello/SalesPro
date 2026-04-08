@@ -30,14 +30,14 @@ router.post("/login", async (req, res) => {
 
     // Sign a token that expires in 8 hours - enough for a full work shift
     const token = jwt.sign(
-      { id: user.id, username: user.username, role: user.role, fullName: user.fullName },
+      { id: user.id, username: user.username, role: user.role, fullName: user.fullName, branchId: user.branchId ?? null },
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
 
     res.json({
       token,
-      user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role },
+      user: { id: user.id, username: user.username, fullName: user.fullName, role: user.role, branchId: user.branchId ?? null },
     });
   } catch (err) {
     console.error(err);
@@ -50,7 +50,7 @@ router.get("/me", authenticate, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, username: true, fullName: true, role: true },
+      select: { id: true, username: true, fullName: true, role: true, branchId: true },
     });
     res.json(user);
   } catch (err) {

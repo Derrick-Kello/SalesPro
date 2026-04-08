@@ -9,23 +9,39 @@ const router = express.Router();
 router.use(authenticate);
 
 // Get all active products, with their current stock levels
+// Pass ?branchId=X to filter products assigned to a specific branch
 router.get("/", async (req, res) => {
   try {
-    const { search, category } = req.query;
+    const { search, category, branchId } = req.query;
 
-    const where = { isActive: true };
+    const conditions = [{ isActive: true }];
     if (search) {
-      where.OR = [
-        { name: { contains: search, mode: "insensitive" } },
-        { barcode: { contains: search, mode: "insensitive" } },
-        { category: { contains: search, mode: "insensitive" } },
-      ];
+      conditions.push({
+        OR: [
+          { name: { contains: search, mode: "insensitive" } },
+          { barcode: { contains: search, mode: "insensitive" } },
+          { category: { contains: search, mode: "insensitive" } },
+        ],
+      });
     }
-    if (category) where.category = { equals: category, mode: "insensitive" };
+    if (category) conditions.push({ category: { equals: category, mode: "insensitive" } });
+    // Show products assigned to this branch OR products with no branch restriction (available everywhere)
+    if (branchId) {
+      conditions.push({
+        OR: [
+          { branches: { some: { id: parseInt(branchId) } } },
+          { branches: { none: {} } },
+        ],
+      });
+    }
+    const where = conditions.length === 1 ? conditions[0] : { AND: conditions };
 
     const products = await prisma.product.findMany({
       where,
-      include: { inventory: true },
+      include: {
+        inventory: true,
+        branches: { select: { id: true, name: true } },
+      },
       orderBy: { name: "asc" },
     });
     res.json(products);
@@ -39,7 +55,7 @@ router.get("/barcode/:barcode", async (req, res) => {
   try {
     const product = await prisma.product.findUnique({
       where: { barcode: req.params.barcode },
-      include: { inventory: true },
+      include: { inventory: true, branches: { select: { id: true, name: true } } },
     });
     if (!product || !product.isActive) {
       return res.status(404).json({ error: "Product not found" });
@@ -55,7 +71,7 @@ router.get("/:id", async (req, res) => {
   try {
     const product = await prisma.product.findUnique({
       where: { id: parseInt(req.params.id) },
-      include: { inventory: true },
+      include: { inventory: true, branches: { select: { id: true, name: true } } },
     });
     if (!product) return res.status(404).json({ error: "Product not found" });
     res.json(product);
@@ -66,14 +82,13 @@ router.get("/:id", async (req, res) => {
 
 // Add a new product - only managers and admins
 router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
-  const { name, category, price, barcode, description, quantity, lowStockAlert, supplier } = req.body;
+  const { name, category, price, barcode, description, quantity, lowStockAlert, supplier, branchIds } = req.body;
 
   if (!name || !category || !price) {
     return res.status(400).json({ error: "Name, category, and price are required" });
   }
 
   try {
-    // Create the product and its inventory record at the same time
     const product = await prisma.product.create({
       data: {
         name,
@@ -88,8 +103,11 @@ router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
             supplier,
           },
         },
+        branches: branchIds?.length
+          ? { connect: branchIds.map((id) => ({ id: parseInt(id) })) }
+          : undefined,
       },
-      include: { inventory: true },
+      include: { inventory: true, branches: { select: { id: true, name: true } } },
     });
     res.status(201).json(product);
   } catch (err) {
@@ -102,14 +120,19 @@ router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
 
 // Update product details
 router.put("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
-  const { name, category, price, barcode, description } = req.body;
+  const { name, category, price, barcode, description, branchIds } = req.body;
   const id = parseInt(req.params.id);
 
   try {
+    const data = { name, category, price: price ? parseFloat(price) : undefined, barcode, description };
+    // If branchIds is provided, replace the full set
+    if (Array.isArray(branchIds)) {
+      data.branches = { set: branchIds.map((bid) => ({ id: parseInt(bid) })) };
+    }
     const product = await prisma.product.update({
       where: { id },
-      data: { name, category, price: price ? parseFloat(price) : undefined, barcode, description },
-      include: { inventory: true },
+      data,
+      include: { inventory: true, branches: { select: { id: true, name: true } } },
     });
     res.json(product);
   } catch (err) {

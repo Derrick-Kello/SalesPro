@@ -12,6 +12,11 @@ const salesRoutes = require("./routes/sales");
 const customerRoutes = require("./routes/customers");
 const reportRoutes = require("./routes/reports");
 const userRoutes = require("./routes/users");
+const supplierRoutes = require("./routes/suppliers");
+const expenseRoutes = require("./routes/expenses");
+const branchRoutes = require("./routes/branches");
+const warehouseRoutes = require("./routes/warehouses");
+const transferRoutes = require("./routes/transfers");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,6 +33,11 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/customers", customerRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/suppliers", supplierRoutes);
+app.use("/api/expenses", expenseRoutes);
+app.use("/api/branches", branchRoutes);
+app.use("/api/warehouses", warehouseRoutes);
+app.use("/api/transfers", transferRoutes);
 
 // Simple health check so you can confirm the server is running
 app.get("/api/health", (req, res) => {
