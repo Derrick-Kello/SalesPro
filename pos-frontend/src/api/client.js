@@ -24,8 +24,10 @@ async function request(method, path, body) {
     return
   }
 
-  const data = await res.json()
-  if (!res.ok) throw new Error(data.error || 'Request failed')
+  // Some responses have no body (204, empty 500s) — handle gracefully
+  const text = await res.text()
+  const data = text ? JSON.parse(text) : {}
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
   return data
 }
 

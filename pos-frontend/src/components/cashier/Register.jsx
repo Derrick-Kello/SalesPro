@@ -1,8 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
+import { useAuth } from '../../context/AuthContext'
 import Modal from '../Modal'
 import BarcodeDisplay from '../BarcodeDisplay'
-import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode } from 'lucide-react'
+import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle } from 'lucide-react'
 
 const STORE_NAME = 'My Store'
 const TAX_RATE   = 0.10
@@ -14,6 +15,8 @@ const PAY_METHODS = [
 ]
 
 export default function Register() {
+  const { user } = useAuth()
+  const branchId = user?.branchId ?? null
   const [allProducts, setAllProducts] = useState([])
   const [products, setProducts]       = useState([])
   const [customers, setCustomers]     = useState([])
@@ -32,12 +35,17 @@ export default function Register() {
   const [checkoutError, setCheckoutError] = useState('')
   const [newCust, setNewCust]           = useState({ name: '', phone: '', email: '' })
   const [barcodePreview, setBarcodePreview] = useState(null)
+  const [processing, setProcessing]     = useState(false)
   const scanTimerRef = useRef(null)
   const lastKeyTime  = useRef(0)
+  const submittingRef = useRef(false) // hard guard against double-submit
 
   const loadProducts = useCallback(async () => {
-    try { setAllProducts(await api.get('/products')) } catch (err) { console.error(err.message) }
-  }, [])
+    try {
+      const params = branchId ? `?branchId=${branchId}` : ''
+      setAllProducts(await api.get(`/products${params}`))
+    } catch (err) { console.error(err.message) }
+  }, [branchId])
 
   const loadCustomers = useCallback(async () => {
     try { setCustomers(await api.get('/customers')) } catch (err) { console.error(err.message) }
@@ -144,9 +152,15 @@ export default function Register() {
   }
 
   async function processPayment() {
+    if (submittingRef.current) return   // block any concurrent call
+    submittingRef.current = true
+    setProcessing(true)
     setCheckoutError('')
     if (payMethod === 'CASH' && Number(amountPaid) < grandTotal) {
-      setCheckoutError('Amount tendered is less than the total'); return
+      setCheckoutError('Amount tendered is less than the total')
+      setProcessing(false)
+      submittingRef.current = false
+      return
     }
     try {
       const sale = await api.post('/sales', {
@@ -163,7 +177,12 @@ export default function Register() {
       setReceiptOpen(true)
       clearCart()
       loadProducts()
-    } catch (err) { setCheckoutError(err.message) }
+    } catch (err) {
+      setCheckoutError(err.message)
+    } finally {
+      setProcessing(false)
+      submittingRef.current = false
+    }
   }
 
   async function registerCustomer() {
@@ -182,6 +201,15 @@ export default function Register() {
   }
 
   return (
+    <>
+    {!branchId && (
+      <div style={{ padding: 40, textAlign: 'center' }}>
+        <AlertTriangle size={40} color="var(--warning)" style={{ marginBottom: 16 }} />
+        <h3 style={{ marginBottom: 8 }}>No Branch Assigned</h3>
+        <p style={{ color: 'var(--text-muted)' }}>Your account is not assigned to a branch. Please contact an administrator.</p>
+      </div>
+    )}
+    {branchId && (
     <div className="pos-layout">
       {/* ── Products Panel ── */}
       <div className="pos-products">
@@ -357,9 +385,17 @@ export default function Register() {
           onClose={() => setCheckoutOpen(false)}
           footer={
             <>
-              <button className="btn btn-outline" onClick={() => setCheckoutOpen(false)}>Cancel</button>
-              <button className="btn btn-success" onClick={processPayment} style={{ fontWeight: 700 }}>
-                Confirm Payment
+              <button className="btn btn-outline" onClick={() => setCheckoutOpen(false)} disabled={processing}>Cancel</button>
+              <button
+                className="btn btn-success"
+                onClick={processPayment}
+                disabled={processing}
+                style={{ fontWeight: 700, minWidth: 160, display: 'flex', alignItems: 'center', gap: 7 }}
+              >
+                {processing
+                  ? <><span className="spin" style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%' }} /> Processing…</>
+                  : 'Confirm Payment'
+                }
               </button>
             </>
           }
@@ -376,6 +412,7 @@ export default function Register() {
                   key={key}
                   className={'payment-btn' + (payMethod === key ? ' active' : '')}
                   onClick={() => setPayMethod(key)}
+                  disabled={processing}
                   style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}
                 >
                   <Icon size={18} strokeWidth={1.8} />
@@ -394,6 +431,7 @@ export default function Register() {
                 value={amountPaid}
                 onChange={e => setAmountPaid(e.target.value)}
                 placeholder="0.00"
+                disabled={processing}
                 autoFocus
               />
               {Number(amountPaid) > 0 && (
@@ -519,5 +557,7 @@ export default function Register() {
         </Modal>
       )}
     </div>
+    )}
+    </>
   )
 }

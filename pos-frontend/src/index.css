@@ -1631,3 +1631,45 @@ body {
     break-inside: avoid;
   }
 }
+
+/* ── Sidebar submenu groups ── */
+.sidebar-submenu {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 4px 0;
+}
+
+.sidebar-submenu li a {
+  padding: 7px 16px 7px 36px;
+  font-size: 13px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  transition: background var(--t), color var(--t);
+}
+
+.sidebar-submenu li a:hover {
+  background: var(--surface3);
+  color: var(--text);
+}
+
+.sidebar-submenu li a.active {
+  background: var(--primary-light);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.sidebar-group {
+  cursor: pointer;
+}
+
+.sidebar-group.active {
+  color: var(--primary) !important;
+}
+
+/* ── Spin animation for refresh icon ── */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }
