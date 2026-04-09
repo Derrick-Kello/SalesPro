@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
+import { usePermissions } from '../../context/PermissionContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
@@ -11,9 +12,9 @@ import { PackagePlus } from 'lucide-react'
 export default function Inventory() {
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
-  const canEdit = user?.role === 'ADMIN' || user?.role === 'MANAGER'
-  const isAdmin = user?.role === 'ADMIN'
-  const showBranchCol = isAdmin && !selectedBranchId
+  const { can } = usePermissions()
+  const canEdit = can('inventory.adjust')
+  const showBranchCol = user?.role === 'ADMIN' && !selectedBranchId
 
   const [inventory, setInventory]       = useState([])
   const [modal, setModal]               = useState(false)

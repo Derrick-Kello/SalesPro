@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import bwipjs from 'bwip-js'
 import Modal from './Modal'
 import { Printer } from 'lucide-react'
+import { useCurrency } from '../context/CurrencyContext'
 
 // Each individual label renders barcode as an <img> (prints reliably vs canvas)
 function SingleLabel({ product }) {
+  const { fmt } = useCurrency()
   const [src, setSrc] = useState(null)
 
   useEffect(() => {
@@ -28,7 +30,7 @@ function SingleLabel({ product }) {
     <div className="barcode-label">
       <div className="barcode-label-name">{product.name}</div>
       {src && <img src={src} alt={product.barcode} style={{ maxWidth: '100%' }} />}
-      <div className="barcode-label-price">${Number(product.price).toFixed(2)}</div>
+      <div className="barcode-label-price">{fmt(product.price)}</div>
     </div>
   )
 }

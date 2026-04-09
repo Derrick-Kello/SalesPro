@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
-import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
+import { useCurrency } from '../../context/CurrencyContext'
+import { usePermissions } from '../../context/PermissionContext'
 import Modal from '../Modal'
 import { LoadingRow } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
-import { Eye, Filter } from 'lucide-react'
+import { Eye, Filter, Trash2 } from 'lucide-react'
 
 export default function SalesHistory() {
-  const { user } = useAuth()
   const { selectedBranchId } = useBranch()
-  const canCancel = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  const { fmt } = useCurrency()
+  const { can } = usePermissions()
   const [sales, setSales]             = useState([])
   const [startDate, setStartDate]     = useState('')
   const [endDate, setEndDate]         = useState('')
@@ -49,6 +50,11 @@ export default function SalesHistory() {
     setDetailModal(false); load()
   }
 
+  async function deleteSale(id) {
+    if (!confirm('Permanently delete this sale? This cannot be undone.')) return
+    try { await api.delete(`/sales/${id}`); load() } catch (err) { alert(err.message) }
+  }
+
   const statusClass = s => s === 'COMPLETED' ? 'badge-success' : s === 'CANCELLED' ? 'badge-danger' : 'badge-warning'
 
   return (
@@ -70,23 +76,34 @@ export default function SalesHistory() {
 
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>ID</th><th>Date</th><th>Cashier</th><th>Customer</th><th>Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th>ID</th><th>Date</th><th>Cashier</th><th>Customer</th><th>Amount</th><th>Discount</th><th>Tax</th><th>Shipping</th><th>Grand Total</th><th>Payment</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={8} />}
-            {!tableLoading && sales.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>}
+            {tableLoading && <LoadingRow cols={12} />}
+            {!tableLoading && sales.length === 0 && <tr><td colSpan={12} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>}
             {!tableLoading && sales.map(s => (
               <tr key={s.id}>
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td>{s.user.fullName}</td>
                 <td>{s.customer?.name || <span style={{ color: 'var(--text-light)' }}>Walk-in</span>}</td>
-                <td style={{ fontWeight: 700 }}>${s.grandTotal.toFixed(2)}</td>
+                <td>{fmt(s.totalAmount)}</td>
+                <td style={{ color: s.discount > 0 ? 'var(--danger)' : 'var(--text-light)' }}>{s.discount > 0 ? `−${fmt(s.discount)}` : '—'}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.tax > 0 ? fmt(s.tax) : '—'}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.shipping > 0 ? fmt(s.shipping) : '—'}</td>
+                <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                 <td><span className={`badge ${statusClass(s.status)}`}>{s.status}</span></td>
                 <td>
-                  <button className="icon-btn primary" title="View details" disabled={viewLoading} onClick={() => viewSale(s.id)}>
-                    <Eye size={13} strokeWidth={2} />
-                  </button>
+                  <div className="action-group">
+                    <button className="icon-btn primary" title="View details" disabled={viewLoading} onClick={() => viewSale(s.id)}>
+                      <Eye size={13} strokeWidth={2} />
+                    </button>
+                    {can('sales.delete') && (
+                      <button className="icon-btn danger" title="Delete sale" onClick={() => deleteSale(s.id)}>
+                        <Trash2 size={13} strokeWidth={2} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -99,7 +116,7 @@ export default function SalesHistory() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setDetailModal(false)}>Close</button>
-              {canCancel && detail.status === 'COMPLETED' && (
+              {can('sales.cancel') && detail.status === 'COMPLETED' && (
                 <button className="btn btn-warning" onClick={() => cancelSale(detail.id)} disabled={cancelling}>
                   {cancelling ? 'Cancelling…' : 'Cancel Sale'}
                 </button>
@@ -122,18 +139,19 @@ export default function SalesHistory() {
               {detail.saleItems.map(i => (
                 <tr key={i.id}>
                   <td>{i.product.name}</td><td>{i.quantity}</td>
-                  <td>${i.unitPrice.toFixed(2)}</td>
-                  <td style={{ fontWeight: 600 }}>${i.subtotal.toFixed(2)}</td>
+                  <td>{fmt(i.unitPrice)}</td>
+                  <td style={{ fontWeight: 600 }}>{fmt(i.subtotal)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <div style={{ textAlign: 'right', marginTop: 16, fontSize: 13.5, display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
-            <div>Subtotal: <strong>${detail.totalAmount.toFixed(2)}</strong></div>
-            {detail.discount > 0 && <div>Discount: <strong>−${detail.discount.toFixed(2)}</strong></div>}
-            <div>Tax: <strong>${detail.tax.toFixed(2)}</strong></div>
-            <div style={{ fontSize: 17, fontWeight: 800, marginTop: 6, paddingTop: 8, borderTop: '1.5px solid var(--border)' }}>Total: ${detail.grandTotal.toFixed(2)}</div>
-            {detail.payment?.change > 0 && <div>Change: <strong>${detail.payment.change.toFixed(2)}</strong></div>}
+            <div>Subtotal: <strong>{fmt(detail.totalAmount)}</strong></div>
+            {detail.discount > 0 && <div>Discount: <strong>−{fmt(detail.discount)}</strong></div>}
+            {detail.tax > 0 && <div>Tax: <strong>{fmt(detail.tax)}</strong></div>}
+            {detail.shipping > 0 && <div>Shipping: <strong>{fmt(detail.shipping)}</strong></div>}
+            <div style={{ fontSize: 17, fontWeight: 800, marginTop: 6, paddingTop: 8, borderTop: '1.5px solid var(--border)' }}>Total: {fmt(detail.grandTotal)}</div>
+            {detail.payment?.change > 0 && <div>Change: <strong>{fmt(detail.payment.change)}</strong></div>}
           </div>
         </Modal>
       )}

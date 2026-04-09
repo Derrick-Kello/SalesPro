@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
+import { useCurrency } from '../../context/CurrencyContext'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 
 export default function Reports({ subSection = 'sales-report' }) {
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
+  const { fmt } = useCurrency()
   const isAdmin = user?.role === 'ADMIN'
   const isManager = user?.role === 'MANAGER'
 
@@ -26,7 +28,7 @@ export default function Reports({ subSection = 'sales-report' }) {
     }
   }, [isAdmin])
 
-  useEffect(() => { load() }, [subSection, effectiveBranchId])
+  useEffect(() => { load() }, [subSection, effectiveBranchId, startDate, endDate])
 
   async function load() {
     setLoading(true); setData(null)
@@ -42,7 +44,7 @@ export default function Reports({ subSection = 'sales-report' }) {
       } else if (subSection === 'payments') {
         setData(await api.get(`/reports/weekly${qs}`))
       } else if (subSection === 'profit-loss') {
-        setData(await api.get(`/reports/overview-stats${qs}`))
+        setData(await api.get(`/reports/profit-loss${qs}`))
       } else if (subSection === 'user-report') {
         setData(await api.get(`/reports/cashiers${qs}`))
       } else if (subSection === 'stock-alerts') {
@@ -78,7 +80,7 @@ export default function Reports({ subSection = 'sales-report' }) {
               {branches.filter(b => b.isActive).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           )}
-          {(subSection === 'sales-report' || subSection === 'payments') && (
+          {(subSection === 'sales-report' || subSection === 'payments' || subSection === 'profit-loss') && (
             <>
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
@@ -90,19 +92,19 @@ export default function Reports({ subSection = 'sales-report' }) {
 
       {loading && <p style={{ color: 'var(--text-muted)' }}>Loading…</p>}
       {data?.error && <p style={{ color: 'var(--danger)' }}>{data.error}</p>}
-      {!loading && data && !data.error && <ReportBody type={subSection} data={data} />}
+      {!loading && data && !data.error && <ReportBody type={subSection} data={data} fmt={fmt} />}
     </div>
   )
 }
 
-function ReportBody({ type, data }) {
+function ReportBody({ type, data, fmt }) {
   if (type === 'sales-report') return (
     <div className="table-container">
       <table className="data-table">
         <thead><tr><th>Product</th><th>Category</th><th>Qty Sold</th><th>Revenue</th></tr></thead>
         <tbody>
           {data.length
-            ? data.map(p => <tr key={p.productId}><td>{p.name}</td><td><span className="badge badge-info">{p.category}</span></td><td>{p.totalQuantity}</td><td style={{ fontWeight: 700 }}>${p.totalRevenue.toFixed(2)}</td></tr>)
+            ? data.map(p => <tr key={p.productId}><td>{p.name}</td><td><span className="badge badge-info">{p.category}</span></td><td>{p.totalQuantity}</td><td style={{ fontWeight: 700 }}>{fmt(p.totalRevenue)}</td></tr>)
             : <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No data</td></tr>}
         </tbody>
       </table>
@@ -114,7 +116,7 @@ function ReportBody({ type, data }) {
     return (
       <>
         <div className="stats-grid" style={{ marginBottom: 20 }}>
-          <div className="stat-card"><div className="stat-label">Weekly Revenue</div><div className="stat-value">${data.totalRevenue?.toFixed(2)}</div></div>
+          <div className="stat-card"><div className="stat-label">Weekly Revenue</div><div className="stat-value">{fmt(data.totalRevenue)}</div></div>
           <div className="stat-card success"><div className="stat-label">Transactions</div><div className="stat-value">{data.totalTransactions}</div></div>
         </div>
         <div className="card" style={{ padding: 20 }}>
@@ -123,7 +125,7 @@ function ReportBody({ type, data }) {
             <BarChart data={chartData}>
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={v => `${v}`} />
+              <Tooltip formatter={v => fmt(v)} />
               <Bar dataKey="revenue" name="Revenue" fill="var(--primary)" radius={[4,4,0,0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -132,18 +134,33 @@ function ReportBody({ type, data }) {
     )
   }
 
-  if (type === 'profit-loss') return (
-    <div className="stats-grid">
-      <div className="stat-card"><div className="stat-label">Total Sales</div><div className="stat-value" style={{ color: 'var(--success)' }}>${data.totalSales?.toFixed(2)}</div></div>
-      <div className="stat-card"><div className="stat-label">Total Expenses</div><div className="stat-value" style={{ color: 'var(--danger)' }}>${data.totalExpenses?.toFixed(2)}</div></div>
-      <div className="stat-card"><div className="stat-label">Net Profit</div>
-        <div className="stat-value" style={{ color: (data.totalSales - data.totalExpenses) >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-          ${(data.totalSales - data.totalExpenses).toFixed(2)}
+  if (type === 'profit-loss') {
+    return (
+      <>
+        {(data.purchaseCategoryMissing || data.purchaseReturnCategoryMissing) && (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16, maxWidth: 640 }}>
+            Tip: create expense categories named <strong>Inventory Purchases</strong> and <strong>Purchase Returns</strong> under Expenses → Expense Categories to track those lines on this report.
+          </p>
+        )}
+        <div className="stats-grid">
+          <div className="stat-card"><div className="stat-label">Sales (completed)</div><div className="stat-value" style={{ color: 'var(--success)' }}>{fmt(data.salesMade)}</div></div>
+          <div className="stat-card"><div className="stat-label">Sales returns</div><div className="stat-value">{fmt(data.salesReturns)}</div></div>
+          <div className="stat-card"><div className="stat-label">Net revenue</div><div className="stat-value" style={{ fontWeight: 800 }}>{fmt(data.netRevenue)}</div></div>
+          <div className="stat-card"><div className="stat-label">Inventory purchases</div><div className="stat-value">{fmt(data.inventoryPurchases)}</div></div>
+          <div className="stat-card"><div className="stat-label">Purchase returns</div><div className="stat-value">{fmt(data.purchaseReturns)}</div></div>
+          <div className="stat-card"><div className="stat-label">Total expenses</div><div className="stat-value" style={{ color: 'var(--danger)' }}>{fmt(data.totalExpenses)}</div></div>
+          <div className="stat-card"><div className="stat-label">Payments received</div><div className="stat-value">{fmt(data.totalPaymentsReceived)}</div></div>
+          <div className="stat-card"><div className="stat-label">Cost of goods sold</div><div className="stat-value">{fmt(data.costOfGoodsSold)}</div></div>
+          <div className="stat-card success"><div className="stat-label">Gross profit</div><div className="stat-value">{fmt(data.grossProfit)}</div></div>
+          <div className="stat-card"><div className="stat-label">Net profit</div>
+            <div className="stat-value" style={{ color: data.netProfit >= 0 ? 'var(--success)' : 'var(--danger)' }}>{fmt(data.netProfit)}</div>
+          </div>
+          <div className="stat-card"><div className="stat-label">Completed sales #</div><div className="stat-value">{data.completedTransactionCount ?? 0}</div></div>
+          <div className="stat-card"><div className="stat-label">Refunded sales #</div><div className="stat-value">{data.refundedTransactionCount ?? 0}</div></div>
         </div>
-      </div>
-      <div className="stat-card"><div className="stat-label">Transactions</div><div className="stat-value">{data.totalTransactions}</div></div>
-    </div>
-  )
+      </>
+    )
+  }
 
   if (type === 'user-report') return (
     <div className="table-container">
@@ -151,7 +168,7 @@ function ReportBody({ type, data }) {
         <thead><tr><th>Name</th><th>Username</th><th>Sales</th><th>Revenue</th></tr></thead>
         <tbody>
           {data.length
-            ? data.map(c => <tr key={c.userId}><td style={{ fontWeight: 600 }}>{c.fullName}</td><td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{c.username}</td><td>{c.totalSales}</td><td style={{ fontWeight: 700 }}>${c.totalRevenue.toFixed(2)}</td></tr>)
+            ? data.map(c => <tr key={c.userId}><td style={{ fontWeight: 600 }}>{c.fullName}</td><td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{c.username}</td><td>{c.totalSales}</td><td style={{ fontWeight: 700 }}>{fmt(c.totalRevenue)}</td></tr>)
             : <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No data</td></tr>}
         </tbody>
       </table>

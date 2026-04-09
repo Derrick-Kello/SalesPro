@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '../context/AuthContext'
 import { useBranch } from '../context/BranchContext'
+import { useCurrency } from '../context/CurrencyContext'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
-import { LogOut, ShoppingBag, GitBranch } from 'lucide-react'
+import { LogOut, ShoppingBag, GitBranch, Coins } from 'lucide-react'
 
 const ROLE_LABELS = { ADMIN: 'Administrator', MANAGER: 'Manager', CASHIER: 'Cashier' }
 
@@ -15,6 +16,7 @@ export default function Navbar({ extra }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
   const branchCtx = useBranch()
+  const { currency, setCurrency, currencies } = useCurrency()
   const [branches, setBranches] = useState([])
 
   useEffect(() => {
@@ -53,6 +55,19 @@ export default function Navbar({ extra }) {
             </select>
           </div>
         )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <Coins size={14} color="var(--text-muted)" strokeWidth={2} />
+          <select
+            value={currency.code}
+            onChange={e => setCurrency(e.target.value)}
+            style={{ fontSize: 13, padding: '5px 10px', border: '1.5px solid var(--border)', borderRadius: 8, background: 'var(--surface)', color: 'var(--text)', fontFamily: 'inherit', cursor: 'pointer' }}
+          >
+            {currencies.map(c => (
+              <option key={c.code} value={c.code}>{c.symbol} {c.name}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="nav-user">
           <div className="nav-avatar">{getInitials(user?.fullName)}</div>

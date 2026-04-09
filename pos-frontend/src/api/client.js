@@ -7,16 +7,25 @@ function getToken() {
   return localStorage.getItem('token')
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, _retries = 0) {
   const headers = { 'Content-Type': 'application/json' }
   const token = getToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  })
+  let res
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch (networkErr) {
+    if (method === 'GET' && _retries < 2) {
+      await new Promise(r => setTimeout(r, 1000 * (_retries + 1)))
+      return request(method, path, body, _retries + 1)
+    }
+    throw networkErr
+  }
 
   if (res.status === 401 && path !== '/auth/login') {
     localStorage.clear()
@@ -24,10 +33,16 @@ async function request(method, path, body) {
     return
   }
 
-  // Some responses have no body (204, empty 500s) — handle gracefully
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`)
+
+  if (!res.ok) {
+    if (res.status >= 500 && method === 'GET' && _retries < 2) {
+      await new Promise(r => setTimeout(r, 1000 * (_retries + 1)))
+      return request(method, path, body, _retries + 1)
+    }
+    throw new Error(data.error || `Request failed (${res.status})`)
+  }
   return data
 }
 

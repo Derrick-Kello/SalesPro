@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
 import { useBranch } from '../../context/BranchContext'
+import { useCurrency } from '../../context/CurrencyContext'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell,
@@ -27,6 +28,7 @@ export default function Overview() {
   const [lastUpdated, setLastUpdated] = useState(null)
   const timerRef = useRef(null)
   const { selectedBranchId } = useBranch()
+  const { fmt } = useCurrency()
 
   const fetchStats = useCallback(async (silent = false) => {
     if (!silent) setLoading(s => s)
@@ -87,9 +89,9 @@ export default function Overview() {
 
       {/* Stat cards */}
       <div className="stats-grid" style={{ marginBottom: 24 }}>
-        <StatCard icon={DollarSign} label="Sales This Month"      value={`$${(stats?.totalSales ?? 0).toFixed(2)}`}    color="var(--primary)" />
+        <StatCard icon={DollarSign} label="Sales This Month"      value={fmt(stats?.totalSales ?? 0)}    color="var(--primary)" />
         <StatCard icon={ShoppingBag} label="Transactions"          value={stats?.totalTransactions ?? 0}                color="var(--success)" />
-        <StatCard icon={TrendingDown} label="Expenses This Month"  value={`$${(stats?.totalExpenses ?? 0).toFixed(2)}`} color="var(--danger)" />
+        <StatCard icon={TrendingDown} label="Expenses This Month"  value={fmt(stats?.totalExpenses ?? 0)} color="var(--danger)" />
         <StatCard icon={AlertTriangle} label="Low Stock Alerts"    value={stats?.lowStockCount ?? 0}                    color="var(--warning)" />
       </div>
 
@@ -101,7 +103,7 @@ export default function Overview() {
             <BarChart data={weeklyData} margin={{ top: 0, right: 8, left: -10, bottom: 0 }}>
               <XAxis dataKey="date" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip formatter={v => `$${v}`} />
+              <Tooltip formatter={v => fmt(v)} />
               <Legend wrapperStyle={{ fontSize: 12 }} />
               <Bar dataKey="sales"    name="Sales"    fill="var(--primary)" radius={[4,4,0,0]} />
               <Bar dataKey="expenses" name="Expenses" fill="var(--danger)"  radius={[4,4,0,0]} />
@@ -164,7 +166,7 @@ export default function Overview() {
                 <Pie data={stats.paymentBreakdown} dataKey="amount" nameKey="method" cx="50%" cy="50%" outerRadius={60}>
                   {stats.paymentBreakdown.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
                 </Pie>
-                <Tooltip formatter={v => `$${Number(v).toFixed(2)}`} />
+                <Tooltip formatter={v => fmt(v)} />
                 <Legend wrapperStyle={{ fontSize: 11 }} formatter={v => v.replace('_', ' ')} />
               </PieChart>
             </ResponsiveContainer>

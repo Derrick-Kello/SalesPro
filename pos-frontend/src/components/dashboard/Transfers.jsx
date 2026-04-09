@@ -1,18 +1,20 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { api } from '../../api/client'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
-import { Plus, ArrowRight } from 'lucide-react'
+import { Plus, ArrowRight, Trash2 } from 'lucide-react'
+import { usePermissions } from '../../context/PermissionContext'
+import { useCurrency } from '../../context/CurrencyContext'
 
 const EMPTY = {
   productId: '',
   quantity: '',
-  fromType: 'branch',      // 'branch' | 'warehouse'
+  fromType: 'branch',
   fromBranchId: '',
   fromWarehouseId: '',
-  toType: 'branch',        // 'branch' | 'warehouse'
+  toType: 'branch',
   toBranchId: '',
   toWarehouseId: '',
   note: '',
@@ -56,6 +58,9 @@ function LocationSelector({ label, type, onTypeChange, branchValue, onBranchChan
 }
 
 export default function Transfers() {
+  const { can } = usePermissions()
+  const { fmt } = useCurrency()
+  const canDelete = can('transfers.delete')
   const [transfers, setTransfers]       = useState([])
   const [branches, setBranches]         = useState([])
   const [warehouses, setWarehouses]     = useState([])
@@ -64,6 +69,16 @@ export default function Transfers() {
   const [form, setForm]                 = useState(EMPTY)
   const [tableLoading, setTableLoading] = useState(true)
   const [saving, saveError, runSave, setSaveError] = useAsync()
+
+  const productMap = useMemo(() => {
+    const m = {}
+    products.forEach(p => { m[p.id] = p })
+    return m
+  }, [products])
+
+  const selectedProduct = productMap[form.productId] || null
+  const previewQty = parseInt(form.quantity) || 0
+  const previewTotalValue = selectedProduct ? (selectedProduct.costPrice || 0) * previewQty : 0
 
   async function load(silent) {
     if (!silent) setTableLoading(true)
@@ -110,6 +125,11 @@ export default function Transfers() {
     })
   }
 
+  async function deleteTransfer(id) {
+    if (!confirm('Delete this transfer record? Inventory changes will be reversed.')) return
+    try { await api.delete(`/transfers/${id}`); load() } catch (err) { alert(err.message) }
+  }
+
   function locationLabel(t) {
     return t.fromWarehouse?.name
       ? `${t.fromWarehouse.name} (WH)`
@@ -132,21 +152,38 @@ export default function Transfers() {
 
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Date</th><th>Product</th><th>Qty</th><th>From</th><th>To</th><th>By</th><th>Note</th></tr></thead>
+          <thead>
+            <tr>
+              <th>Date</th><th>Product</th><th>Qty</th>
+              <th>Cost Price</th><th>Unit Price</th><th>Total Value</th>
+              <th>From</th><th>To</th><th>By</th><th>Note</th>
+              {canDelete && <th>Actions</th>}
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={7} />}
+            {tableLoading && <LoadingRow cols={canDelete ? 11 : 10} />}
             {!tableLoading && transfers.length === 0 && (
-              <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No transfers yet</td></tr>
+              <tr><td colSpan={canDelete ? 11 : 10} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No transfers yet</td></tr>
             )}
             {!tableLoading && transfers.map(t => (
               <tr key={t.id}>
                 <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{new Date(t.createdAt).toLocaleString()}</td>
                 <td style={{ fontWeight: 600 }}>{t.product?.name}</td>
                 <td style={{ fontWeight: 700 }}>{t.quantity}</td>
+                <td style={{ fontSize: 13 }}>{fmt(t.costPrice || 0)}</td>
+                <td style={{ fontSize: 13 }}>{fmt(t.unitPrice || 0)}</td>
+                <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{fmt(t.totalValue || 0)}</td>
                 <td><span className="badge badge-warning">{locationLabel(t)}</span></td>
                 <td><span className="badge badge-success">{destLabel(t)}</span></td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{t.transferredBy?.fullName}</td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{t.note || '—'}</td>
+                {canDelete && (
+                  <td>
+                    <button className="icon-btn danger" title="Delete transfer" onClick={() => deleteTransfer(t.id)}>
+                      <Trash2 size={13} strokeWidth={2} />
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -170,6 +207,24 @@ export default function Transfers() {
               <input type="number" min="1" value={form.quantity} onChange={e => f('quantity', e.target.value)} placeholder="Units to transfer" />
             </div>
           </div>
+
+          {selectedProduct && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, margin: '8px 0 12px', padding: '10px 14px', background: 'var(--bg-secondary, #f5f6fa)', borderRadius: 8, fontSize: 13 }}>
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Cost Price</span>
+                <strong>{fmt(selectedProduct.costPrice || 0)}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Selling Price</span>
+                <strong>{fmt(selectedProduct.price || 0)}</strong>
+              </div>
+              <div>
+                <span style={{ color: 'var(--text-muted)', fontSize: 11, display: 'block' }}>Transfer Value</span>
+                <strong style={{ color: 'var(--primary)' }}>{fmt(previewTotalValue)}</strong>
+                {previewQty > 0 && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}> ({previewQty} × {fmt(selectedProduct.costPrice || 0)})</span>}
+              </div>
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', gap: 10, alignItems: 'flex-start', marginTop: 4 }}>
             <LocationSelector

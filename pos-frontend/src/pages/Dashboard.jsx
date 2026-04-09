@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import Navbar from '../components/Navbar'
-import { useAuth } from '../context/AuthContext'
-import { BranchProvider } from '../context/BranchContext'
+import { usePermissions } from '../context/PermissionContext'
 import { ActiveTabContext } from '../hooks/useTabRefresh'
 import Overview        from '../components/dashboard/Overview'
 import Products        from '../components/dashboard/Products'
@@ -18,50 +18,55 @@ import Branches        from '../components/dashboard/Branches'
 import Warehouses      from '../components/dashboard/Warehouses'
 import CreateTransfer  from '../components/dashboard/CreateTransfer'
 import Transfers       from '../components/dashboard/Transfers'
+import Settings from '../components/dashboard/Settings'
 import {
   LayoutDashboard, Package2, Boxes, Users as UsersIcon,
   Receipt, BarChart3, UserCog, Menu, ChevronDown, ChevronRight,
   Truck, DollarSign, PlusCircle, Tag, FileText, TrendingUp,
   AlertTriangle, Warehouse, List, Printer, GitBranch, ArrowRightLeft,
+  ShoppingCart, Settings as SettingsIcon,
 } from 'lucide-react'
 
 const SIDEBAR = [
-  { key: 'overview', label: 'Overview', icon: LayoutDashboard, roles: ['ADMIN', 'MANAGER'] },
+  { key: 'overview', label: 'Overview', icon: LayoutDashboard, perm: 'dashboard.view' },
   {
-    label: 'Products', icon: Package2, roles: ['ADMIN', 'MANAGER'],
+    label: 'Products', icon: Package2, perm: 'products.view',
     children: [
-      { key: 'products-all',        label: 'All Products',        icon: List },
-      { key: 'products-create',     label: 'Create Product',      icon: PlusCircle },
-      { key: 'products-labels',     label: 'Print Labels',        icon: Printer },
-      { key: 'products-categories', label: 'Categories',          icon: Tag },
+      { key: 'products-all',        label: 'All Products',   icon: List },
+      { key: 'products-create',     label: 'Create Product', icon: PlusCircle, perm: 'products.create' },
+      { key: 'products-labels',     label: 'Print Labels',   icon: Printer },
+      { key: 'products-categories', label: 'Categories',     icon: Tag },
     ],
   },
-  { key: 'inventory', label: 'Inventory', icon: Boxes, roles: ['ADMIN', 'MANAGER'] },
-  { key: 'transfers',  label: 'Transfers',  icon: ArrowRightLeft, roles: ['ADMIN', 'MANAGER'] },
-  { key: 'sales', label: 'Sales History', icon: Receipt, roles: ['ADMIN', 'MANAGER'] },
-   { key: 'branches',   label: 'Branches',   icon: GitBranch,      roles: ['ADMIN'] },
-  { key: 'warehouses', label: 'Warehouses', icon: Warehouse,      roles: ['ADMIN'] },
-   
-  
+  { key: 'inventory',  label: 'Inventory',  icon: Boxes,           perm: 'inventory.view' },
+  { key: 'transfers',  label: 'Transfers',  icon: ArrowRightLeft,  perm: 'transfers.view' },
   {
-    label: 'Expenses', icon: DollarSign, roles: ['ADMIN', 'MANAGER'],
+    label: 'Sales', icon: Receipt, perm: 'sales.view',
+    children: [
+      { key: 'sales', label: 'Sales History', icon: Receipt },
+      { key: 'sales-pos', label: 'Point of Sale', icon: ShoppingCart, href: '/cashier', perm: 'pos.access' },
+    ],
+  },
+  { key: 'branches',   label: 'Branches',   icon: GitBranch, perm: 'branches.view' },
+  { key: 'warehouses', label: 'Warehouses', icon: Warehouse, perm: 'warehouses.view' },
+  {
+    label: 'Expenses', icon: DollarSign, perm: 'expenses.view',
     children: [
       { key: 'expenses-all',        label: 'All Expenses',       icon: FileText },
-      { key: 'expenses-create',     label: 'Create Expense',     icon: PlusCircle },
-      { key: 'expenses-categories', label: 'Expense Categories', icon: Tag },
+      { key: 'expenses-create',     label: 'Create Expense',     icon: PlusCircle, perm: 'expenses.create' },
+      { key: 'expenses-categories', label: 'Expense Categories', icon: Tag, perm: 'expense_categories.manage' },
     ],
   },
- 
   {
-    label: 'People', icon: UsersIcon, roles: ['ADMIN', 'MANAGER'],
+    label: 'People', icon: UsersIcon, perm: 'customers.view',
     children: [
-      { key: 'customers', label: 'Customers', icon: UsersIcon },
-      { key: 'suppliers', label: 'Suppliers', icon: Truck },
-      { key: 'users',     label: 'Users',     icon: UserCog, roles: ['ADMIN'] },
+      { key: 'customers', label: 'Customers', icon: UsersIcon, perm: 'customers.view' },
+      { key: 'suppliers', label: 'Suppliers', icon: Truck,      perm: 'suppliers.view' },
+      { key: 'users',     label: 'Users',     icon: UserCog,    perm: 'users.view' },
     ],
   },
-    {
-    label: 'Reports', icon: BarChart3, roles: ['ADMIN', 'MANAGER'],
+  {
+    label: 'Reports', icon: BarChart3, perm: 'reports.view',
     children: [
       { key: 'report-payments',    label: 'Payments',      icon: DollarSign },
       { key: 'report-sales',       label: 'Sales Report',  icon: Receipt },
@@ -71,6 +76,7 @@ const SIDEBAR = [
       { key: 'report-warehouse',   label: 'Warehouse',     icon: Warehouse },
     ],
   },
+  { key: 'settings', label: 'Settings', icon: SettingsIcon, perm: 'settings.access' },
 ]
 
 const REPORT_MAP = {
@@ -102,6 +108,7 @@ const TAB_COMPONENTS = {
   'warehouses':          () => <Warehouses />,
   'transfers':           () => <Transfers />,
   'create-transfer':     () => <CreateTransfer />,
+  'settings':            () => <Settings />,
 }
 
 function KeepAlive({ active, visited }) {
@@ -121,10 +128,10 @@ function KeepAlive({ active, visited }) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth()
+  const { can } = usePermissions()
   const [active, setActive] = useState('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [expanded, setExpanded] = useState({ Products: true, People: false, Reports: false, Expenses: false })
+  const [expanded, setExpanded] = useState({ Products: true, Sales: true, People: false, Reports: false, Expenses: false })
   const [visited, setVisited] = useState(() => new Set(['overview']))
 
   function toggleGroup(label) {
@@ -143,12 +150,11 @@ export default function Dashboard() {
   }
 
   function isVisible(item) {
-    const roles = item.roles || ['ADMIN', 'MANAGER', 'CASHIER']
-    return roles.includes(user?.role)
+    if (item.perm) return can(item.perm)
+    return true
   }
 
   return (
-    <BranchProvider>
     <div style={{ minHeight: '100vh', background: 'var(--bg)' }}>
       <Navbar extra={
         <button className="btn btn-ghost btn-sm btn-icon nav-menu-btn" onClick={() => setSidebarOpen(o => !o)} aria-label="Toggle menu">
@@ -178,7 +184,7 @@ export default function Dashboard() {
               // Group with children
               const Icon = item.icon
               const isOpen = expanded[item.label]
-              const visibleChildren = item.children.filter(c => !c.roles || c.roles.includes(user?.role))
+              const visibleChildren = item.children.filter(c => !c.perm || can(c.perm))
               const isChildActive = visibleChildren.some(c => c.key === active)
 
               return (
@@ -196,6 +202,16 @@ export default function Dashboard() {
                     <ul className="sidebar-submenu">
                       {visibleChildren.map(child => {
                         const CIcon = child.icon
+                        if (child.href) {
+                          return (
+                            <li key={child.key}>
+                              <Link to={child.href} className="" onClick={() => setSidebarOpen(false)}>
+                                <CIcon size={14} className="sidebar-icon" strokeWidth={1.8} />
+                                {child.label}
+                              </Link>
+                            </li>
+                          )
+                        }
                         return (
                           <li key={child.key}>
                             <a href="#" className={active === child.key ? 'active' : ''}
@@ -221,6 +237,5 @@ export default function Dashboard() {
         </main>
       </div>
     </div>
-    </BranchProvider>
   )
 }

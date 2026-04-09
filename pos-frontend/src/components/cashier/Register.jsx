@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
+import { useBranch } from '../../context/BranchContext'
+import { useCurrency } from '../../context/CurrencyContext'
 import Modal from '../Modal'
 import BarcodeDisplay from '../BarcodeDisplay'
 import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle } from 'lucide-react'
 
 const STORE_NAME = 'My Store'
-const TAX_RATE   = 0.10
 
 const PAY_METHODS = [
   { key: 'CASH',         label: 'Cash',         icon: Banknote },
@@ -16,7 +17,13 @@ const PAY_METHODS = [
 
 export default function Register() {
   const { user } = useAuth()
-  const branchId = user?.branchId ?? null
+  const { fmt, currency } = useCurrency()
+  const branchCtx = useBranch()
+  const selectedBranchId = branchCtx?.selectedBranchId ?? null
+  const branchId =
+    user?.role === 'ADMIN'
+      ? selectedBranchId
+      : (user?.branchId ?? null)
   const [allProducts, setAllProducts] = useState([])
   const [products, setProducts]       = useState([])
   const [customers, setCustomers]     = useState([])
@@ -25,6 +32,8 @@ export default function Register() {
   const [search, setSearch]           = useState('')
   const [customerId, setCustomerId]   = useState('')
   const [discount, setDiscount]       = useState(0)
+  const [taxInput, setTaxInput]       = useState(0)
+  const [shippingInput, setShippingInput] = useState(0)
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [receiptOpen, setReceiptOpen]   = useState(false)
   const [customerOpen, setCustomerOpen] = useState(false)
@@ -47,6 +56,14 @@ export default function Register() {
     } catch (err) { console.error(err.message) }
   }, [branchId])
 
+  function stockForProduct(p) {
+    if (branchId) {
+      if (p.branchInventory?.length) return p.branchInventory[0].quantity
+      return p.inventory ? p.inventory.quantity : 0
+    }
+    return p.inventory ? p.inventory.quantity : 0
+  }
+
   const loadCustomers = useCallback(async () => {
     try { setCustomers(await api.get('/customers')) } catch (err) { console.error(err.message) }
   }, [])
@@ -68,7 +85,8 @@ export default function Register() {
   async function handleBarcodeEnter(e) {
     if (e.key !== 'Enter' || !search.trim()) return
     try {
-      const product = await api.get('/products/barcode/' + encodeURIComponent(search.trim()))
+      const raw = await api.get('/products/barcode/' + encodeURIComponent(search.trim()))
+      const product = allProducts.find(p => p.id === raw.id) || raw
       addToCart(product)
       setSearch('')
     } catch (_) {}
@@ -93,7 +111,8 @@ export default function Register() {
         const val = e.target.value
         if (!val.trim()) return
         try {
-          const product = await api.get('/products/barcode/' + encodeURIComponent(val.trim()))
+          const raw = await api.get('/products/barcode/' + encodeURIComponent(val.trim()))
+          const product = allProducts.find(p => p.id === raw.id) || raw
           addToCart(product)
           setSearch('')
         } catch (_) {}
@@ -102,7 +121,7 @@ export default function Register() {
   }
 
   function addToCart(product) {
-    const stock = product.inventory ? product.inventory.quantity : 0
+    const stock = stockForProduct(product)
     setCart(prev => {
       const existing = prev.find(i => i.productId === product.id)
       const currentQty = existing ? existing.quantity : 0
@@ -137,12 +156,12 @@ export default function Register() {
 
   function removeItem(productId) { setCart(prev => prev.filter(i => i.productId !== productId)) }
 
-  function clearCart() { setCart([]); setDiscount(0); setCustomerId('') }
+  function clearCart() { setCart([]); setDiscount(0); setTaxInput(0); setShippingInput(0); setCustomerId('') }
 
   const subtotal   = cart.reduce((s, i) => s + i.subtotal, 0)
-  const taxable    = Math.max(0, subtotal - Number(discount))
-  const tax        = taxable * TAX_RATE
-  const grandTotal = taxable + tax
+  const tax        = Number(taxInput) || 0
+  const shippingAmt = Number(shippingInput) || 0
+  const grandTotal = Math.max(0, subtotal - Number(discount)) + tax + shippingAmt
   const change     = Number(amountPaid) - grandTotal
 
   function openCheckout() {
@@ -168,9 +187,11 @@ export default function Register() {
         items: cart.map(i => ({ productId: i.productId, quantity: i.quantity })),
         discount: Number(discount),
         tax,
+        shipping: shippingAmt,
         paymentMethod: payMethod,
         amountPaid: payMethod === 'CASH' ? Number(amountPaid) : grandTotal,
         paymentReference: payRef || null,
+        ...(user?.role === 'ADMIN' && branchId ? { branchId } : {}),
       })
       setLastSale(sale)
       setCheckoutOpen(false)
@@ -205,8 +226,12 @@ export default function Register() {
     {!branchId && (
       <div style={{ padding: 40, textAlign: 'center' }}>
         <AlertTriangle size={40} color="var(--warning)" style={{ marginBottom: 16 }} />
-        <h3 style={{ marginBottom: 8 }}>No Branch Assigned</h3>
-        <p style={{ color: 'var(--text-muted)' }}>Your account is not assigned to a branch. Please contact an administrator.</p>
+        <h3 style={{ marginBottom: 8 }}>{user?.role === 'ADMIN' ? 'Select a branch' : 'No Branch Assigned'}</h3>
+        <p style={{ color: 'var(--text-muted)' }}>
+          {user?.role === 'ADMIN'
+            ? 'Use the branch selector in the top bar to choose where this sale will be recorded, then add items to the cart.'
+            : 'Your account is not assigned to a branch. Please contact an administrator.'}
+        </p>
       </div>
     )}
     {branchId && (
@@ -247,7 +272,7 @@ export default function Register() {
         {/* Product grid */}
         <div className="product-grid">
           {products.map(p => {
-            const stock = p.inventory ? p.inventory.quantity : 0
+            const stock = stockForProduct(p)
             return (
               <div
                 key={p.id}
@@ -255,7 +280,7 @@ export default function Register() {
                 onClick={() => stock > 0 && addToCart(p)}
               >
                 <div className="product-name">{p.name}</div>
-                <div className="product-price">${p.price.toFixed(2)}</div>
+                <div className="product-price">{fmt(p.price)}</div>
                 <div className="product-stock">
                   {stock === 0 ? 'Out of stock' : `${stock} in stock`}
                 </div>
@@ -320,7 +345,7 @@ export default function Register() {
                   <span className="cart-item-qty">{item.quantity}</span>
                   <button className="qty-btn" onClick={() => updateQty(item.productId, 1)}>+</button>
                 </div>
-                <div className="cart-item-price">${item.subtotal.toFixed(2)}</div>
+                <div className="cart-item-price">{fmt(item.subtotal)}</div>
                 <button className="cart-item-remove" onClick={() => removeItem(item.productId)}>
                   <X size={14} strokeWidth={2.5} />
                 </button>
@@ -333,10 +358,10 @@ export default function Register() {
         <div className="cart-totals">
           <div className="total-row">
             <span>Subtotal</span>
-            <span>${subtotal.toFixed(2)}</span>
+            <span>{fmt(subtotal)}</span>
           </div>
           <div className="total-row">
-            <span>Discount ($)</span>
+            <span>Discount ({currency.symbol})</span>
             <div className="discount-input">
               <input
                 type="number"
@@ -348,12 +373,32 @@ export default function Register() {
             </div>
           </div>
           <div className="total-row">
-            <span>Tax (10%)</span>
-            <span>${tax.toFixed(2)}</span>
+            <span>Tax ({currency.symbol})</span>
+            <div className="discount-input">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={taxInput}
+                onChange={e => setTaxInput(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="total-row">
+            <span>Shipping ({currency.symbol})</span>
+            <div className="discount-input">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={shippingInput}
+                onChange={e => setShippingInput(e.target.value)}
+              />
+            </div>
           </div>
           <div className="total-row grand-total">
             <span>Total</span>
-            <span>${grandTotal.toFixed(2)}</span>
+            <span>{fmt(grandTotal)}</span>
           </div>
         </div>
 
@@ -401,7 +446,7 @@ export default function Register() {
           }
         >
           <div className="payment-summary">
-            Total Amount: <strong>${grandTotal.toFixed(2)}</strong>
+            Total Amount: <strong>{fmt(grandTotal)}</strong>
           </div>
 
           <div className="form-group" style={{ marginTop: 16 }}>
@@ -443,7 +488,7 @@ export default function Register() {
                     marginTop: 8,
                   }}
                 >
-                  Change: <strong>${Math.max(0, change).toFixed(2)}</strong>
+                  Change: <strong>{fmt(Math.max(0, change))}</strong>
                 </div>
               )}
             </div>
@@ -497,19 +542,20 @@ export default function Register() {
             <hr className="receipt-divider" />
             {lastSale.saleItems.map(i => (
               <div key={i.id} className="receipt-item">
-                <span>{i.product.name} x{i.quantity} @ ${i.unitPrice.toFixed(2)}</span>
-                <span>${i.subtotal.toFixed(2)}</span>
+                <span>{i.product.name} x{i.quantity} @ {fmt(i.unitPrice)}</span>
+                <span>{fmt(i.subtotal)}</span>
               </div>
             ))}
             <hr className="receipt-divider" />
             <div className="receipt-totals">
-              <div className="receipt-total-row"><span>Subtotal</span><span>${lastSale.totalAmount.toFixed(2)}</span></div>
-              {lastSale.discount > 0 && <div className="receipt-total-row"><span>Discount</span><span>-${lastSale.discount.toFixed(2)}</span></div>}
-              <div className="receipt-total-row"><span>Tax (10%)</span><span>${lastSale.tax.toFixed(2)}</span></div>
-              <div className="receipt-total-row final"><span>TOTAL</span><span>${lastSale.grandTotal.toFixed(2)}</span></div>
+              <div className="receipt-total-row"><span>Subtotal</span><span>{fmt(lastSale.totalAmount)}</span></div>
+              {lastSale.discount > 0 && <div className="receipt-total-row"><span>Discount</span><span>-{fmt(lastSale.discount)}</span></div>}
+              {lastSale.tax > 0 && <div className="receipt-total-row"><span>Tax</span><span>{fmt(lastSale.tax)}</span></div>}
+              {lastSale.shipping > 0 && <div className="receipt-total-row"><span>Shipping</span><span>{fmt(lastSale.shipping)}</span></div>}
+              <div className="receipt-total-row final"><span>TOTAL</span><span>{fmt(lastSale.grandTotal)}</span></div>
               <div className="receipt-total-row"><span>Payment</span><span>{lastSale.payment.method.replace('_', ' ')}</span></div>
-              {lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Amount Paid</span><span>${lastSale.payment.amountPaid.toFixed(2)}</span></div>}
-              {lastSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>${lastSale.payment.change.toFixed(2)}</span></div>}
+              {lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Amount Paid</span><span>{fmt(lastSale.payment.amountPaid)}</span></div>}
+              {lastSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>{fmt(lastSale.payment.change)}</span></div>}
             </div>
             <hr className="receipt-divider" />
             <div className="receipt-footer"><p>Thank you for shopping at {STORE_NAME}!</p></div>

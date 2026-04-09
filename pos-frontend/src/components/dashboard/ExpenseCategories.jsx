@@ -4,12 +4,13 @@ import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Pencil, Trash2 } from 'lucide-react'
 
 export default function ExpenseCategories() {
   const [categories, setCategories]     = useState([])
   const [modal, setModal]               = useState(false)
   const [name, setName]                 = useState('')
+  const [editId, setEditId]             = useState(null)
   const [tableLoading, setTableLoading] = useState(true)
   const [saving, saveError, runSave, setSaveError] = useAsync()
 
@@ -21,11 +22,14 @@ export default function ExpenseCategories() {
   useEffect(() => { load() }, [])
   useTabRefresh('expenses-categories', () => load(true))
 
+  function openEdit(c) { setEditId(c.id); setName(c.name); setSaveError(''); setModal(true) }
+
   async function save() {
     if (!name.trim()) { setSaveError('Name is required'); return }
     await runSave(async () => {
-      await api.post('/expenses/categories', { name: name.trim() })
-      setModal(false); setName(''); load()
+      if (editId) await api.put(`/expenses/categories/${editId}`, { name: name.trim() })
+      else await api.post('/expenses/categories', { name: name.trim() })
+      setModal(false); setName(''); setEditId(null); load()
     })
   }
 
@@ -38,7 +42,7 @@ export default function ExpenseCategories() {
     <div>
       <div className="section-header">
         <h2>Expense Categories</h2>
-        <button className="btn btn-primary" onClick={() => { setName(''); setSaveError(''); setModal(true) }}><Plus size={15} strokeWidth={2.5} /> Add Category</button>
+        <button className="btn btn-primary" onClick={() => { setName(''); setEditId(null); setSaveError(''); setModal(true) }}><Plus size={15} strokeWidth={2.5} /> Add Category</button>
       </div>
 
       <div className="table-container">
@@ -51,7 +55,12 @@ export default function ExpenseCategories() {
               <tr key={c.id}>
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(c.createdAt).toLocaleDateString()}</td>
-                <td><button className="icon-btn danger" onClick={() => remove(c.id)}><Trash2 size={13} strokeWidth={2} /></button></td>
+                <td>
+                  <div className="action-group">
+                    <button className="icon-btn primary" title="Edit" onClick={() => openEdit(c)}><Pencil size={13} strokeWidth={2} /></button>
+                    <button className="icon-btn danger" title="Delete" onClick={() => remove(c.id)}><Trash2 size={13} strokeWidth={2} /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -59,7 +68,7 @@ export default function ExpenseCategories() {
       </div>
 
       {modal && (
-        <Modal title="Add Expense Category" onClose={() => setModal(false)}
+        <Modal title={editId ? 'Edit Expense Category' : 'Add Expense Category'} onClose={() => setModal(false)}
           footer={<><button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancel</button><SaveBtn loading={saving} onClick={save} /></>}>
           <div className="form-group">
             <label>Category Name *</label>

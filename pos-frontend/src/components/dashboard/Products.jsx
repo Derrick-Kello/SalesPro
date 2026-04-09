@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { api } from '../../api/client'
-import { useAuth } from '../../context/AuthContext'
+import { useCurrency } from '../../context/CurrencyContext'
+import { usePermissions } from '../../context/PermissionContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
@@ -20,11 +21,12 @@ function generateUPCA() {
   return [...digits, check].join('')
 }
 
-const EMPTY = { name: '', category: '', price: '', barcode: '', description: '', quantity: 0, lowStockAlert: 10, supplier: '', branchIds: [] }
+const EMPTY = { name: '', category: '', price: '', costPrice: '', barcode: '', description: '', quantity: 0, lowStockAlert: 10, supplier: '', branchIds: [] }
 
 export default function Products({ mode = 'all' }) {
-  const { user } = useAuth()
-  const canEdit = user?.role === 'ADMIN' || user?.role === 'MANAGER'
+  const { fmt } = useCurrency()
+  const { can } = usePermissions()
+  const canEdit = can('products.edit') || can('products.create')
   const [products, setProducts] = useState([])
   const [branches, setBranches] = useState([])
   const [search, setSearch] = useState('')
@@ -63,6 +65,7 @@ export default function Products({ mode = 'all' }) {
   function openEdit(p) {
     setForm({
       name: p.name, category: p.category, price: p.price,
+      costPrice: p.costPrice != null ? p.costPrice : '',
       barcode: p.barcode || '', description: p.description || '',
       quantity: p.inventory?.quantity ?? 0,
       lowStockAlert: p.inventory?.lowStockAlert ?? 10,
@@ -73,7 +76,7 @@ export default function Products({ mode = 'all' }) {
   }
 
   async function save() {
-    if (!form.name || !form.category || !form.price) { setSaveError('Name, category and price are required'); return }
+    if (!form.name || !form.category || !form.price || form.costPrice === '' || form.costPrice === undefined) { setSaveError('Name, category, selling price, and cost price are required'); return }
     await runSave(async () => {
       if (editId) await api.put(`/products/${editId}`, form)
       else await api.post('/products', form)
@@ -94,10 +97,11 @@ export default function Products({ mode = 'all' }) {
     doc.text('Products List', 14, 16)
     autoTable(doc, {
       startY: 22,
-      head: [['#', 'Name', 'Category', 'Price', 'Barcode', 'Stock']],
+      head: [['#', 'Name', 'Category', 'Cost Price', 'Selling Price', 'Barcode', 'Stock']],
       body: filtered.map(p => [
         p.id, p.name, p.category,
-        `$${p.price.toFixed(2)}`,
+        fmt(p.costPrice ?? 0),
+        fmt(p.price),
         p.barcode || '—',
         p.inventory?.quantity ?? 0,
       ]),
@@ -113,7 +117,8 @@ export default function Products({ mode = 'all' }) {
       ID: p.id,
       Name: p.name,
       Category: p.category,
-      Price: p.price,
+      CostPrice: p.costPrice ?? 0,
+      SellingPrice: p.price,
       Barcode: p.barcode || '',
       Stock: p.inventory?.quantity ?? 0,
       LowStockAlert: p.inventory?.lowStockAlert ?? 10,
@@ -141,11 +146,12 @@ export default function Products({ mode = 'all' }) {
         for (const row of rows) {
           const name = row.Name || row.name
           const category = row.Category || row.category
-          const price = parseFloat(row.Price || row.price)
-          if (!name || !category || isNaN(price)) { skipped++; continue }
+          const price = parseFloat(row.SellingPrice || row.Price || row.price)
+          const costPrice = parseFloat(row.CostPrice || row.costPrice || 0)
+          if (!name || !category || isNaN(price) || isNaN(costPrice)) { skipped++; continue }
           try {
             await api.post('/products', {
-              name, category, price,
+              name, category, price, costPrice,
               barcode: row.Barcode || row.barcode || undefined,
               description: row.Description || row.description || '',
               quantity: parseInt(row.Stock || row.stock) || 0,
@@ -210,21 +216,22 @@ export default function Products({ mode = 'all' }) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Name</th><th>Category</th><th>Price</th><th>Barcode</th><th>Stock</th><th>Branches</th>
+              <th>ID</th><th>Name</th><th>Category</th><th>Cost Price</th><th>Selling Price</th><th>Barcode</th><th>Stock</th><th>Branches</th>
               {canEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={canEdit ? 8 : 7} />}
+            {tableLoading && <LoadingRow cols={canEdit ? 9 : 8} />}
             {!tableLoading && filtered.length === 0 && (
-              <tr><td colSpan={canEdit ? 8 : 7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No products found</td></tr>
+              <tr><td colSpan={canEdit ? 9 : 8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No products found</td></tr>
             )}
             {!tableLoading && filtered.map(p => (
               <tr key={p.id}>
                 <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{p.id}</td>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td><span className="badge badge-info">{p.category}</span></td>
-                <td style={{ fontWeight: 700 }}>${p.price.toFixed(2)}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{fmt(p.costPrice ?? 0)}</td>
+                <td style={{ fontWeight: 700 }}>{fmt(p.price)}</td>
                 <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{p.barcode || '—'}</td>
                 <td>
                   <span className={`badge ${(p.inventory?.quantity ?? 0) <= (p.inventory?.lowStockAlert ?? 10) ? 'badge-warning' : 'badge-success'}`}>
@@ -265,7 +272,10 @@ export default function Products({ mode = 'all' }) {
             <div className="form-group"><label>Category *</label><input value={form.category} onChange={e => setForm(f => ({ ...f, category: e.target.value }))} placeholder="e.g. Beverages" /></div>
           </div>
           <div className="form-row">
-            <div className="form-group"><label>Price *</label><input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0.00" /></div>
+            <div className="form-group"><label>Cost Price *</label><input type="number" step="0.01" min="0" value={form.costPrice} onChange={e => setForm(f => ({ ...f, costPrice: e.target.value }))} placeholder="0.00" /></div>
+            <div className="form-group"><label>Selling Price *</label><input type="number" step="0.01" min="0" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} placeholder="0.00" /></div>
+          </div>
+          <div className="form-row">
             <div className="form-group">
               <label>Barcode (UPC-A)</label>
               <div style={{ display: 'flex', gap: 6 }}>

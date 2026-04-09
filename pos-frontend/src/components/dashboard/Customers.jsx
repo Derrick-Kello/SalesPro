@@ -1,14 +1,18 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
+import { useCurrency } from '../../context/CurrencyContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
+import { usePermissions } from '../../context/PermissionContext'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
-import { Plus, Pencil, History, Search } from 'lucide-react'
+import { Plus, Pencil, History, Search, Trash2 } from 'lucide-react'
 
 const EMPTY = { name: '', phone: '', email: '', address: '' }
 
 export default function Customers() {
+  const { fmt } = useCurrency()
+  const { can } = usePermissions()
   const [customers, setCustomers]       = useState([])
   const [search, setSearch]             = useState('')
   const [modal, setModal]               = useState(false)
@@ -32,6 +36,11 @@ export default function Customers() {
   function openEdit(c) {
     setForm({ name: c.name, phone: c.phone || '', email: c.email || '', address: c.address || '' })
     setEditId(c.id); setSaveError(''); setModal(true)
+  }
+
+  async function deleteCustomer(id) {
+    if (!confirm('Delete this customer? This cannot be undone.')) return
+    try { await api.delete(`/customers/${id}`); load() } catch (err) { alert(err.message) }
   }
 
   async function viewHistory(id) {
@@ -85,6 +94,9 @@ export default function Customers() {
                   <div className="action-group">
                     <button className="icon-btn primary" title="Edit" onClick={() => openEdit(c)}><Pencil size={13} strokeWidth={2} /></button>
                     <button className="icon-btn" title="Purchase history" disabled={histLoading} onClick={() => viewHistory(c.id)}><History size={13} strokeWidth={2} /></button>
+                    {can('customers.delete') && (
+                      <button className="icon-btn danger" title="Delete customer" onClick={() => deleteCustomer(c.id)}><Trash2 size={13} strokeWidth={2} /></button>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -127,7 +139,7 @@ export default function Customers() {
                     <tr key={s.id}>
                       <td style={{ fontFamily: 'monospace' }}>#{s.id}</td>
                       <td>{new Date(s.createdAt).toLocaleDateString()}</td>
-                      <td style={{ fontWeight: 700 }}>${s.grandTotal.toFixed(2)}</td>
+                      <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
                       <td>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                     </tr>
                   ))

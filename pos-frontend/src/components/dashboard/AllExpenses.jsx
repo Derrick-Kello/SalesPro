@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
+import { useCurrency } from '../../context/CurrencyContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
@@ -13,6 +14,7 @@ const EMPTY = { title: '', amount: '', categoryId: '', note: '', date: '' }
 export default function AllExpenses() {
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
+  const { fmt } = useCurrency()
   const isAdmin = user?.role === 'ADMIN'
   const showBranchCol = isAdmin && !selectedBranchId
   const [expenses, setExpenses]         = useState([])
@@ -91,7 +93,7 @@ export default function AllExpenses() {
           }
           Filter
         </button>
-        {expenses.length > 0 && <span style={{ marginLeft: 'auto', fontWeight: 700, alignSelf: 'center' }}>Total: ${total.toFixed(2)}</span>}
+        {expenses.length > 0 && <span style={{ marginLeft: 'auto', fontWeight: 700, alignSelf: 'center' }}>Total: {fmt(total)}</span>}
       </div>
 
       <div className="table-container">
@@ -106,7 +108,7 @@ export default function AllExpenses() {
                 <td style={{ fontWeight: 600 }}>{e.title}</td>
                 <td><span className="badge badge-info">{e.category.name}</span></td>
                 {showBranchCol && <td style={{ color: 'var(--text-muted)' }}>{e.branch?.name || '—'}</td>}
-                <td style={{ fontWeight: 700, color: 'var(--danger)' }}>${e.amount.toFixed(2)}</td>
+                <td style={{ fontWeight: 700, color: 'var(--danger)' }}>{fmt(e.amount)}</td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{e.note || '—'}</td>
                 <td>
                   <div className="action-group">

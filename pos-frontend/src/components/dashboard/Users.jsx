@@ -7,22 +7,43 @@ import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, UserX } from 'lucide-react'
 
 const EMPTY = { fullName: '', username: '', password: '', role: 'CASHIER', branchId: '' }
+const BUILT_IN_ROLES = [
+  { key: 'CASHIER', label: 'Cashier' },
+  { key: 'MANAGER', label: 'Manager' },
+  { key: 'ADMIN', label: 'Admin' },
+]
 const ROLE_COLORS = { ADMIN: 'badge-danger', MANAGER: 'badge-warning', CASHIER: 'badge-info' }
 
 export default function Users() {
   const [users, setUsers]               = useState([])
   const [branches, setBranches]         = useState([])
+  const [customRoles, setCustomRoles]   = useState({})
   const [modal, setModal]               = useState(false)
   const [form, setForm]                 = useState(EMPTY)
   const [editId, setEditId]             = useState(null)
   const [tableLoading, setTableLoading] = useState(true)
   const [saving, saveError, runSave, setSaveError] = useAsync()
 
+  const allRoleOptions = [
+    ...BUILT_IN_ROLES,
+    ...Object.entries(customRoles).map(([key, def]) => ({ key, label: def.name || key })),
+  ]
+
+  function roleName(role) {
+    const found = allRoleOptions.find(r => r.key === role)
+    return found ? found.label : role
+  }
+
   async function load(silent) {
     if (!silent) setTableLoading(true)
     try {
-      const [u, b] = await Promise.all([api.get('/users'), api.get('/branches')])
+      const [u, b, rolesData] = await Promise.all([
+        api.get('/users'),
+        api.get('/branches'),
+        api.get('/settings/roles').catch(() => ({ customRoles: {} })),
+      ])
       setUsers(u); setBranches(b)
+      setCustomRoles(rolesData.customRoles || {})
     } catch {} finally { if (!silent) setTableLoading(false) }
   }
 
@@ -77,7 +98,7 @@ export default function Users() {
               <tr key={u.id}>
                 <td style={{ fontWeight: 600 }}>{u.fullName}</td>
                 <td style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-muted)' }}>{u.username}</td>
-                <td><span className={`badge ${ROLE_COLORS[u.role] ?? 'badge-info'}`}>{u.role}</span></td>
+                <td><span className={`badge ${ROLE_COLORS[u.role] || 'badge-warning'}`}>{roleName(u.role)}</span></td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{u.branchId ? getBranchName(u.branchId) : <span style={{ color: 'var(--text-light)' }}>—</span>}</td>
                 <td><span className={`badge ${u.isActive ? 'badge-success' : 'badge-danger'}`}>{u.isActive ? 'Active' : 'Inactive'}</span></td>
                 <td>
@@ -103,9 +124,9 @@ export default function Users() {
             <div className="form-group"><label>Password {editId ? '(leave blank to keep)' : '*'}</label><input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} placeholder={editId ? '••••••••' : 'New password'} /></div>
             <div className="form-group"><label>Role</label>
               <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-                <option value="CASHIER">Cashier</option>
-                <option value="MANAGER">Manager</option>
-                <option value="ADMIN">Admin</option>
+                {allRoleOptions.map(r => (
+                  <option key={r.key} value={r.key}>{r.label}</option>
+                ))}
               </select>
             </div>
           </div>

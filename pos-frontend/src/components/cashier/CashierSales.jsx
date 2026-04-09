@@ -1,11 +1,15 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
+import { useCurrency } from '../../context/CurrencyContext'
+import { usePermissions } from '../../context/PermissionContext'
 import Modal from '../Modal'
-import { Printer, Filter } from 'lucide-react'
+import { Printer, Filter, Trash2 } from 'lucide-react'
 
 const STORE_NAME = 'My Store'
 
 export default function CashierSales() {
+  const { fmt } = useCurrency()
+  const { can } = usePermissions()
   const [view, setView]           = useState('all')
   const [sales, setSales]         = useState([])
   const [startDate, setStartDate] = useState('')
@@ -39,6 +43,11 @@ export default function CashierSales() {
     } catch { alert('Could not load receipt') }
   }
 
+  async function deleteSale(id) {
+    if (!confirm('Permanently delete this sale? This cannot be undone.')) return
+    try { await api.delete(`/sales/${id}`); load(view) } catch (err) { alert(err.message) }
+  }
+
   const statusClass = s =>
     s === 'COMPLETED' ? 'badge-success' :
     s === 'CANCELLED' ? 'badge-danger'  : 'badge-warning'
@@ -70,7 +79,11 @@ export default function CashierSales() {
               <th>Cashier</th>
               <th>Customer</th>
               <th>Items</th>
-              <th>Total</th>
+              <th>Amount</th>
+              <th>Discount</th>
+              <th>Tax</th>
+              <th>Shipping</th>
+              <th>Grand Total</th>
               <th>Payment</th>
               <th>Status</th>
               <th>Receipt</th>
@@ -78,10 +91,10 @@ export default function CashierSales() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
+              <tr><td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
             )}
             {!loading && sales.length === 0 && (
-              <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
+              <tr><td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
             )}
             {!loading && sales.map(s => (
               <tr key={s.id}>
@@ -90,13 +103,24 @@ export default function CashierSales() {
                 <td>{s.user.fullName}</td>
                 <td>{s.customer?.name || <span style={{ color: 'var(--text-light)' }}>Walk-in</span>}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.saleItems?.length ?? 0}</td>
-                <td style={{ fontWeight: 700 }}>${s.grandTotal.toFixed(2)}</td>
+                <td>{fmt(s.totalAmount)}</td>
+                <td style={{ color: s.discount > 0 ? 'var(--danger)' : 'var(--text-light)' }}>{s.discount > 0 ? `−${fmt(s.discount)}` : '—'}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.tax > 0 ? fmt(s.tax) : '—'}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{s.shipping > 0 ? fmt(s.shipping) : '—'}</td>
+                <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                 <td><span className={`badge ${statusClass(s.status)}`}>{s.status}</span></td>
                 <td>
-                  <button className="btn btn-sm btn-outline" onClick={() => openReceipt(s.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                    <Printer size={12} strokeWidth={2} /> Receipt
-                  </button>
+                  <div className="action-group">
+                    <button className="btn btn-sm btn-outline" onClick={() => openReceipt(s.id)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <Printer size={12} strokeWidth={2} /> Receipt
+                    </button>
+                    {can('sales.delete') && (
+                      <button className="icon-btn danger" title="Delete sale" onClick={() => deleteSale(s.id)}>
+                        <Trash2 size={13} strokeWidth={2} />
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -130,19 +154,20 @@ export default function CashierSales() {
             <hr className="receipt-divider" />
             {receiptSale.saleItems.map(i => (
               <div key={i.id} className="receipt-item">
-                <span>{i.product.name} x{i.quantity} @ ${i.unitPrice.toFixed(2)}</span>
-                <span>${i.subtotal.toFixed(2)}</span>
+                <span>{i.product.name} x{i.quantity} @ {fmt(i.unitPrice)}</span>
+                <span>{fmt(i.subtotal)}</span>
               </div>
             ))}
             <hr className="receipt-divider" />
             <div className="receipt-totals">
-              <div className="receipt-total-row"><span>Subtotal</span><span>${receiptSale.totalAmount.toFixed(2)}</span></div>
-              {receiptSale.discount > 0 && <div className="receipt-total-row"><span>Discount</span><span>-${receiptSale.discount.toFixed(2)}</span></div>}
-              <div className="receipt-total-row"><span>Tax (10%)</span><span>${receiptSale.tax.toFixed(2)}</span></div>
-              <div className="receipt-total-row final"><span>TOTAL</span><span>${receiptSale.grandTotal.toFixed(2)}</span></div>
+              <div className="receipt-total-row"><span>Subtotal</span><span>{fmt(receiptSale.totalAmount)}</span></div>
+              {receiptSale.discount > 0 && <div className="receipt-total-row"><span>Discount</span><span>-{fmt(receiptSale.discount)}</span></div>}
+              {receiptSale.tax > 0 && <div className="receipt-total-row"><span>Tax</span><span>{fmt(receiptSale.tax)}</span></div>}
+              {receiptSale.shipping > 0 && <div className="receipt-total-row"><span>Shipping</span><span>{fmt(receiptSale.shipping)}</span></div>}
+              <div className="receipt-total-row final"><span>TOTAL</span><span>{fmt(receiptSale.grandTotal)}</span></div>
               <div className="receipt-total-row"><span>Payment</span><span>{receiptSale.payment.method.replace('_', ' ')}</span></div>
-              {receiptSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Amount Paid</span><span>${receiptSale.payment.amountPaid.toFixed(2)}</span></div>}
-              {receiptSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>${receiptSale.payment.change.toFixed(2)}</span></div>}
+              {receiptSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Amount Paid</span><span>{fmt(receiptSale.payment.amountPaid)}</span></div>}
+              {receiptSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>{fmt(receiptSale.payment.change)}</span></div>}
             </div>
             <hr className="receipt-divider" />
             <div className="receipt-footer"><p>Thank you for shopping at {STORE_NAME}!</p></div>
