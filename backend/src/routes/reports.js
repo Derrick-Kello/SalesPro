@@ -6,6 +6,10 @@ const { resolveBranchId } = require("../utils/branchScope");
 
 const router = express.Router();
 
+/** Expense category names used to surface inventory purchase flows on P&L (create these in Expense Categories if missing). */
+const INVENTORY_PURCHASES_CATEGORY = "Inventory Purchases";
+const PURCHASE_RETURNS_CATEGORY = "Purchase Returns";
+
 module.exports = router;
 
 function cached(key, fn) {
@@ -113,6 +117,149 @@ router.get("/overview-stats", authenticate, (req, res) => {
   })
   .then(data => res.json(data))
   .catch(err => { console.error(err); res.status(500).json({ error: "Could not fetch overview stats" }); });
+});
+
+// ── Profit & Loss (date range + branch; not cached) ──────────────────────────
+router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (req, res) => {
+  try {
+    const branchId = resolveBranchId(req);
+    const { startDate, endDate } = req.query;
+
+    const now = new Date();
+    const defaultStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    defaultStart.setHours(0, 0, 0, 0);
+    const start = startDate ? new Date(startDate) : defaultStart;
+    const end = endDate ? (() => {
+      const d = new Date(endDate);
+      d.setHours(23, 59, 59, 999);
+      return d;
+    })() : (() => {
+      const d = new Date(now);
+      d.setHours(23, 59, 59, 999);
+      return d;
+    })();
+
+    const saleBranch = branchId ? { branchId } : {};
+    const expenseBranch = branchId ? { branchId } : {};
+
+    const [purchaseCat, returnCat] = await Promise.all([
+      prisma.expenseCategory.findFirst({ where: { name: INVENTORY_PURCHASES_CATEGORY } }),
+      prisma.expenseCategory.findFirst({ where: { name: PURCHASE_RETURNS_CATEGORY } }),
+    ]);
+
+    const [
+      salesCompleted,
+      salesRefunded,
+      paymentsAgg,
+      expensesAgg,
+      purchasesAgg,
+      returnsAgg,
+      cogsRow,
+    ] = await Promise.all([
+      prisma.sale.aggregate({
+        where: {
+          status: "COMPLETED",
+          createdAt: { gte: start, lte: end },
+          ...saleBranch,
+        },
+        _sum: { grandTotal: true },
+        _count: { id: true },
+      }),
+      prisma.sale.aggregate({
+        where: {
+          status: "REFUNDED",
+          createdAt: { gte: start, lte: end },
+          ...saleBranch,
+        },
+        _sum: { grandTotal: true },
+        _count: { id: true },
+      }),
+      prisma.payment.aggregate({
+        where: {
+          sale: {
+            status: "COMPLETED",
+            createdAt: { gte: start, lte: end },
+            ...saleBranch,
+          },
+        },
+        _sum: { amountPaid: true },
+      }),
+      prisma.expense.aggregate({
+        where: {
+          date: { gte: start, lte: end },
+          ...expenseBranch,
+        },
+        _sum: { amount: true },
+      }),
+      purchaseCat
+        ? prisma.expense.aggregate({
+            where: {
+              categoryId: purchaseCat.id,
+              date: { gte: start, lte: end },
+              ...expenseBranch,
+            },
+            _sum: { amount: true },
+          })
+        : Promise.resolve({ _sum: { amount: null } }),
+      returnCat
+        ? prisma.expense.aggregate({
+            where: {
+              categoryId: returnCat.id,
+              date: { gte: start, lte: end },
+              ...expenseBranch,
+            },
+            _sum: { amount: true },
+          })
+        : Promise.resolve({ _sum: { amount: null } }),
+      prisma.$queryRawUnsafe(
+        `
+        SELECT COALESCE(SUM(si.quantity * p."costPrice"), 0)::float AS "cogs"
+        FROM sale_items si
+        JOIN products p ON p.id = si."productId"
+        JOIN sales s ON s.id = si."saleId"
+        WHERE s.status = 'COMPLETED'
+          AND s."createdAt" >= $1 AND s."createdAt" <= $2
+          ${branchId ? `AND s."branchId" = ${parseInt(branchId, 10)}` : ""}
+        `,
+        start,
+        end,
+      ),
+    ]);
+
+    const salesMade = salesCompleted._sum.grandTotal ?? 0;
+    const salesReturns = salesRefunded._sum.grandTotal ?? 0;
+    const netRevenue = salesMade - salesReturns;
+    const totalPaymentsReceived = paymentsAgg._sum.amountPaid ?? 0;
+    const totalExpenses = expensesAgg._sum.amount ?? 0;
+    const inventoryPurchases = purchasesAgg._sum.amount ?? 0;
+    const purchaseReturns = returnsAgg._sum.amount ?? 0;
+    const cogs = cogsRow[0]?.cogs ?? 0;
+    const grossProfit = netRevenue - cogs;
+    const netProfit = grossProfit - totalExpenses;
+
+    res.json({
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+      branchId: branchId ?? null,
+      salesMade,
+      salesReturns,
+      netRevenue,
+      inventoryPurchases,
+      purchaseReturns,
+      totalExpenses,
+      totalPaymentsReceived,
+      costOfGoodsSold: cogs,
+      grossProfit,
+      netProfit,
+      completedTransactionCount: salesCompleted._count.id,
+      refundedTransactionCount: salesRefunded._count.id,
+      purchaseCategoryMissing: !purchaseCat,
+      purchaseReturnCategoryMissing: !returnCat,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Could not generate profit and loss report" });
+  }
 });
 
 // ── Daily report ─────────────────────────────────────────────────────────────

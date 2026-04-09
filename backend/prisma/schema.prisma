@@ -69,6 +69,9 @@ model StockTransfer {
   id               Int      @id @default(autoincrement())
   productId        Int
   quantity         Int
+  costPrice        Float    @default(0)
+  unitPrice        Float    @default(0)
+  totalValue       Float    @default(0)
   fromBranchId     Int?
   fromWarehouseId  Int?
   toBranchId       Int?
@@ -93,7 +96,7 @@ model User {
   username  String   @unique
   password  String
   fullName  String
-  role      Role     @default(CASHIER)
+  role      String   @default("CASHIER")
   isActive  Boolean  @default(true)
   branchId  Int?
   createdAt DateTime @default(now())
@@ -106,11 +109,8 @@ model User {
   @@map("users")
 }
 
-enum Role {
-  ADMIN
-  MANAGER
-  CASHIER
-}
+// Built-in roles: ADMIN, MANAGER, CASHIER
+// Custom roles are stored as strings and managed via the Settings table
 
 // Every product that can be sold in the store
 model Product {
@@ -118,6 +118,7 @@ model Product {
   name        String
   category    String
   price       Float
+  costPrice   Float     @default(0)
   barcode     String?  @unique
   description String?
   isActive    Boolean  @default(true)
@@ -172,6 +173,7 @@ model Sale {
   totalAmount   Float
   discount      Float         @default(0)
   tax           Float         @default(0)
+  shipping      Float         @default(0)
   grandTotal    Float
   status        SaleStatus    @default(COMPLETED)
   createdAt     DateTime      @default(now())
@@ -252,6 +254,15 @@ model ExpenseCategory {
   expenses  Expense[]
 
   @@map("expense_categories")
+}
+
+// Key-value settings store (permissions, app config, etc.)
+model Settings {
+  id    Int    @id @default(autoincrement())
+  key   String @unique
+  value String
+
+  @@map("settings")
 }
 
 // Business expenses

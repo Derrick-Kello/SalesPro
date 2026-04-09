@@ -2,7 +2,7 @@
 
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -41,11 +41,19 @@ router.get("/", async (req, res) => {
       include: {
         inventory: true,
         branches: { select: { id: true, name: true } },
+        ...(branchId
+          ? {
+              branchInventory: {
+                where: { branchId: parseInt(branchId) },
+              },
+            }
+          : {}),
       },
       orderBy: { name: "asc" },
     });
     res.json(products);
   } catch (err) {
+    console.error("[GET /products]", err.message);
     res.status(500).json({ error: "Could not fetch products" });
   }
 });
@@ -81,11 +89,11 @@ router.get("/:id", async (req, res) => {
 });
 
 // Add a new product - only managers and admins
-router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
-  const { name, category, price, barcode, description, quantity, lowStockAlert, supplier, branchIds } = req.body;
+router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create"), async (req, res) => {
+  const { name, category, price, costPrice, barcode, description, quantity, lowStockAlert, supplier, branchIds } = req.body;
 
-  if (!name || !category || !price) {
-    return res.status(400).json({ error: "Name, category, and price are required" });
+  if (!name || !category || !price || costPrice === undefined || costPrice === "" || costPrice === null) {
+    return res.status(400).json({ error: "Name, category, selling price, and cost price are required" });
   }
 
   try {
@@ -94,6 +102,7 @@ router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
         name,
         category,
         price: parseFloat(price),
+        costPrice: parseFloat(costPrice),
         barcode,
         description,
         inventory: {
@@ -119,12 +128,23 @@ router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
 });
 
 // Update product details
-router.put("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
-  const { name, category, price, barcode, description, branchIds } = req.body;
+router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.edit"), async (req, res) => {
+  const { name, category, price, costPrice, barcode, description, branchIds } = req.body;
   const id = parseInt(req.params.id);
 
+  if (!name || !category || !price || costPrice === undefined || costPrice === "" || costPrice === null) {
+    return res.status(400).json({ error: "Name, category, selling price, and cost price are required" });
+  }
+
   try {
-    const data = { name, category, price: price ? parseFloat(price) : undefined, barcode, description };
+    const data = {
+      name,
+      category,
+      price: parseFloat(price),
+      costPrice: parseFloat(costPrice),
+      barcode,
+      description,
+    };
     // If branchIds is provided, replace the full set
     if (Array.isArray(branchIds)) {
       data.branches = { set: branchIds.map((bid) => ({ id: parseInt(bid) })) };
@@ -141,7 +161,7 @@ router.put("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
 });
 
 // Soft delete - we mark it inactive rather than removing it from the database
-router.delete("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.delete("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.delete"), async (req, res) => {
   try {
     await prisma.product.update({
       where: { id: parseInt(req.params.id) },

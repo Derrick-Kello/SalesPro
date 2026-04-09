@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
 router.use(authenticate);
@@ -13,7 +13,7 @@ router.get("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
   } catch { res.status(500).json({ error: "Could not fetch branches" }); }
 });
 
-router.post("/", authorize("ADMIN"), async (req, res) => {
+router.post("/", authorize("ADMIN"), checkPermission("branches.create"), async (req, res) => {
   const { name, location, phone } = req.body;
   if (!name) return res.status(400).json({ error: "Branch name is required" });
   try {
@@ -22,7 +22,7 @@ router.post("/", authorize("ADMIN"), async (req, res) => {
   } catch { res.status(500).json({ error: "Could not create branch" }); }
 });
 
-router.put("/:id", authorize("ADMIN"), async (req, res) => {
+router.put("/:id", authorize("ADMIN"), checkPermission("branches.edit"), async (req, res) => {
   const { name, location, phone, isActive } = req.body;
   try {
     const branch = await prisma.branch.update({
@@ -33,7 +33,7 @@ router.put("/:id", authorize("ADMIN"), async (req, res) => {
   } catch { res.status(500).json({ error: "Could not update branch" }); }
 });
 
-router.delete("/:id", authorize("ADMIN"), async (req, res) => {
+router.delete("/:id", authorize("ADMIN"), checkPermission("branches.deactivate"), async (req, res) => {
   try {
     await prisma.branch.update({ where: { id: parseInt(req.params.id) }, data: { isActive: false } });
     res.json({ message: "Branch deactivated" });

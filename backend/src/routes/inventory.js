@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { resolveBranchId } = require("../utils/branchScope");
 
 const router = express.Router();
@@ -34,7 +34,7 @@ router.get("/low-stock", async (req, res) => {
   } catch { res.status(500).json({ error: "Could not fetch low stock items" }); }
 });
 
-router.put("/:productId/adjust", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.put("/:productId/adjust", authorize("ADMIN", "MANAGER"), checkPermission("inventory.adjust"), async (req, res) => {
   const { quantity, supplier } = req.body;
   const productId = parseInt(req.params.productId);
   const branchId  = resolveBranchId(req);
@@ -52,7 +52,7 @@ router.put("/:productId/adjust", authorize("ADMIN", "MANAGER"), async (req, res)
   } catch { res.status(500).json({ error: "Could not adjust stock" }); }
 });
 
-router.put("/:productId/restock", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.put("/:productId/restock", authorize("ADMIN", "MANAGER"), checkPermission("inventory.adjust"), async (req, res) => {
   const { addQuantity, supplier } = req.body;
   const productId = parseInt(req.params.productId);
   const branchId  = resolveBranchId(req);
@@ -70,7 +70,7 @@ router.put("/:productId/restock", authorize("ADMIN", "MANAGER"), async (req, res
   } catch { res.status(500).json({ error: "Could not restock item" }); }
 });
 
-router.put("/:productId/alert", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.put("/:productId/alert", authorize("ADMIN", "MANAGER"), checkPermission("inventory.adjust"), async (req, res) => {
   const { lowStockAlert } = req.body;
   const productId = parseInt(req.params.productId);
   const branchId  = resolveBranchId(req);

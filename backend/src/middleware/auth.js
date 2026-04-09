@@ -1,9 +1,5 @@
-// This middleware checks that the request has a valid JWT token.
-// It also handles role-based access so certain routes are restricted.
-
 const jwt = require("jsonwebtoken");
 
-// Verify the token and attach the user info to the request
 const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -22,15 +18,40 @@ const authenticate = (req, res, next) => {
   }
 };
 
-// Use this to restrict a route to specific roles
-// Example: authorize("ADMIN", "MANAGER")
+const BUILT_IN_ROLES = ["ADMIN", "MANAGER", "CASHIER"];
+
 const authorize = (...roles) => {
   return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "You do not have permission to do this" });
+    const userRole = req.user.role;
+    if (roles.includes(userRole)) return next();
+
+    // If the route accepts ANY non-ADMIN built-in role, also allow custom roles
+    // through — their fine-grained access is controlled by checkPermission
+    const adminOnly = roles.length === 1 && roles[0] === "ADMIN";
+    if (!adminOnly && !BUILT_IN_ROLES.includes(userRole)) {
+      return next();
     }
-    next();
+
+    return res.status(403).json({ error: "You do not have permission to do this" });
   };
 };
 
-module.exports = { authenticate, authorize };
+// Fine-grained permission check that respects the admin-configured role permissions.
+// ADMIN always passes. For other roles it consults the settings table.
+const checkPermission = (permissionKey) => {
+  return async (req, res, next) => {
+    if (req.user.role === "ADMIN") return next();
+
+    try {
+      const { effectivePermsForUser } = require("../routes/settings");
+      const perms = await effectivePermsForUser(req.user.id, req.user.role);
+      if (perms[permissionKey]) return next();
+    } catch (err) {
+      console.error("[checkPermission]", err.message);
+    }
+
+    return res.status(403).json({ error: "You do not have permission for this action" });
+  };
+};
+
+module.exports = { authenticate, authorize, checkPermission };

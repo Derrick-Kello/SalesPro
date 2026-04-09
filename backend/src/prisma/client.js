@@ -1,8 +1,13 @@
-// We create a single Prisma client instance and reuse it across the app.
-// Creating a new client for every request would be wasteful and slow.
-
 const { PrismaClient } = require("@prisma/client");
 
 const prisma = new PrismaClient();
+
+// Keep the Neon serverless DB warm by pinging every 4 minutes
+setInterval(() => {
+  prisma.$queryRaw`SELECT 1`.catch(() => {});
+}, 240_000);
+
+// Warm the connection immediately on startup
+prisma.$queryRaw`SELECT 1`.catch(() => {});
 
 module.exports = prisma;

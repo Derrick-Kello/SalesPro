@@ -3,7 +3,7 @@
 
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { invalidate } = require("../cache");
 const { resolveBranchId } = require("../utils/branchScope");
 
@@ -38,12 +38,13 @@ router.get("/", async (req, res) => {
         customer: { select: { name: true, phone: true } },
         branch: { select: { name: true } },
         payment: true,
-        saleItems: { include: { product: { select: { name: true } } } },
+        saleItems: { include: { product: { select: { id: true, name: true, price: true } } } },
       },
       orderBy: { createdAt: "desc" },
     });
     res.json(sales);
   } catch (err) {
+    console.error("[GET /sales]", err.message);
     res.status(500).json({ error: "Could not fetch sales" });
   }
 });
@@ -58,19 +59,20 @@ router.get("/:id", async (req, res) => {
         customer: { select: { name: true, phone: true, email: true } },
         branch: { select: { name: true } },
         payment: true,
-        saleItems: { include: { product: true } },
+        saleItems: { include: { product: { select: { id: true, name: true, price: true, category: true, barcode: true } } } },
       },
     });
     if (!sale) return res.status(404).json({ error: "Sale not found" });
     res.json(sale);
   } catch (err) {
+    console.error("[GET /sales/:id]", err.message);
     res.status(500).json({ error: "Could not fetch sale" });
   }
 });
 
 // Process a new sale
 router.post("/", async (req, res) => {
-  const { customerId, items, discount, tax, paymentMethod, amountPaid, paymentReference } = req.body;
+  const { customerId, items, discount, tax, shipping, paymentMethod, amountPaid, paymentReference } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: "Cart is empty" });
@@ -79,9 +81,13 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Payment method is required" });
   }
 
-  const branchId = req.user.branchId ?? null;
+  let branchId = req.user.branchId ?? null;
+  if (req.user.role === "ADMIN" && req.body.branchId != null) {
+    const b = parseInt(req.body.branchId, 10);
+    if (!Number.isNaN(b)) branchId = b;
+  }
   if (!branchId) {
-    return res.status(400).json({ error: "User is not assigned to a branch" });
+    return res.status(400).json({ error: "Branch is required. Admins must choose a branch (navbar) before checkout." });
   }
 
   try {
@@ -90,12 +96,12 @@ router.post("/", async (req, res) => {
       where: { id: { in: productIds } },
     });
 
-    // Check branch inventory for each item
+    // Check branch inventory first, fall back to global inventory
     const branchInventories = await prisma.branchInventory.findMany({
-      where: {
-        branchId,
-        productId: { in: productIds },
-      },
+      where: { branchId, productId: { in: productIds } },
+    });
+    const globalInventories = await prisma.inventory.findMany({
+      where: { productId: { in: productIds } },
     });
 
     for (const item of items) {
@@ -103,8 +109,20 @@ router.post("/", async (req, res) => {
       if (!product) {
         return res.status(404).json({ error: `Product ID ${item.productId} not found` });
       }
-      const inv = branchInventories.find((i) => i.productId === item.productId);
-      if (!inv || inv.quantity < item.quantity) {
+      let branchInv = branchInventories.find((i) => i.productId === item.productId);
+      if (!branchInv) {
+        const globalInv = globalInventories.find((i) => i.productId === item.productId);
+        const availableQty = globalInv?.quantity ?? 0;
+        if (availableQty < item.quantity) {
+          return res.status(400).json({ error: `Not enough stock for ${product.name}` });
+        }
+        branchInv = await prisma.branchInventory.upsert({
+          where: { branchId_productId: { branchId, productId: item.productId } },
+          update: {},
+          create: { branchId, productId: item.productId, quantity: availableQty },
+        });
+        branchInventories.push(branchInv);
+      } else if (branchInv.quantity < item.quantity) {
         return res.status(400).json({ error: `Not enough stock for ${product.name}` });
       }
     }
@@ -124,7 +142,8 @@ router.post("/", async (req, res) => {
 
     const discountAmount = parseFloat(discount) || 0;
     const taxAmount = parseFloat(tax) || 0;
-    const grandTotal = totalAmount - discountAmount + taxAmount;
+    const shippingAmount = parseFloat(shipping) || 0;
+    const grandTotal = totalAmount - discountAmount + taxAmount + shippingAmount;
     const change = (parseFloat(amountPaid) || 0) - grandTotal;
 
     const sale = await prisma.$transaction(async (tx) => {
@@ -136,6 +155,7 @@ router.post("/", async (req, res) => {
           totalAmount,
           discount: discountAmount,
           tax: taxAmount,
+          shipping: shippingAmount,
           grandTotal,
           status: "COMPLETED",
           saleItems: { create: saleItemsData },
@@ -173,7 +193,7 @@ router.post("/", async (req, res) => {
     const completeSale = await prisma.sale.findUnique({
       where: { id: sale.id },
       include: {
-        saleItems: { include: { product: true } },
+        saleItems: { include: { product: { select: { id: true, name: true, price: true, category: true, barcode: true } } } },
         user: { select: { fullName: true, username: true } },
         customer: true,
         branch: { select: { name: true } },
@@ -190,7 +210,7 @@ router.post("/", async (req, res) => {
 });
 
 // Cancel a sale - only managers and admins can do this
-router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), checkPermission("sales.cancel"), async (req, res) => {
   const id = parseInt(req.params.id);
 
   try {
@@ -222,6 +242,39 @@ router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), async (req, res) => {
     res.json({ message: "Sale cancelled and stock restored" });
   } catch (err) {
     res.status(500).json({ error: "Could not cancel sale" });
+  }
+});
+
+// Hard-delete a sale - admin only
+router.delete("/:id", authorize("ADMIN"), checkPermission("sales.delete"), async (req, res) => {
+  const id = parseInt(req.params.id);
+  try {
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      include: { saleItems: true },
+    });
+    if (!sale) return res.status(404).json({ error: "Sale not found" });
+
+    await prisma.$transaction(async (tx) => {
+      if (sale.status === "COMPLETED" && sale.branchId) {
+        await Promise.all(
+          sale.saleItems.map(item =>
+            tx.branchInventory.update({
+              where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
+              data: { quantity: { increment: item.quantity } },
+            }).catch(() => {})
+          )
+        );
+      }
+      await tx.payment.deleteMany({ where: { saleId: id } });
+      await tx.saleItem.deleteMany({ where: { saleId: id } });
+      await tx.sale.delete({ where: { id } });
+    }, { timeout: 15000 });
+
+    res.json({ message: "Sale deleted" });
+  } catch (err) {
+    console.error("[DELETE /sales/:id]", err.message);
+    res.status(500).json({ error: "Could not delete sale" });
   }
 });
 

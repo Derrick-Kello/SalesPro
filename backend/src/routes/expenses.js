@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { resolveBranchId } = require("../utils/branchScope");
 
 const router = express.Router();
@@ -14,7 +14,7 @@ router.get("/categories", async (req, res) => {
   } catch { res.status(500).json({ error: "Could not fetch categories" }); }
 });
 
-router.post("/categories", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.post("/categories", authorize("ADMIN", "MANAGER"), checkPermission("expense_categories.manage"), async (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   try {
@@ -23,6 +23,21 @@ router.post("/categories", authorize("ADMIN", "MANAGER"), async (req, res) => {
   } catch (err) {
     if (err.code === "P2002") return res.status(409).json({ error: "Category already exists" });
     res.status(500).json({ error: "Could not create category" });
+  }
+});
+
+router.put("/categories/:id", authorize("ADMIN"), checkPermission("expense_categories.manage"), async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "Name is required" });
+  try {
+    const cat = await prisma.expenseCategory.update({
+      where: { id: parseInt(req.params.id) },
+      data: { name },
+    });
+    res.json(cat);
+  } catch (err) {
+    if (err.code === "P2002") return res.status(409).json({ error: "Category already exists" });
+    res.status(500).json({ error: "Could not update category" });
   }
 });
 
@@ -58,7 +73,7 @@ router.get("/", async (req, res) => {
   } catch { res.status(500).json({ error: "Could not fetch expenses" }); }
 });
 
-router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("expenses.create"), async (req, res) => {
   const { title, amount, categoryId, note, date, branchId: bodyBranchId } = req.body;
   if (!title || !amount || !categoryId) return res.status(400).json({ error: "Title, amount and category are required" });
 
@@ -86,7 +101,7 @@ router.post("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
   } catch { res.status(500).json({ error: "Could not create expense" }); }
 });
 
-router.put("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("expenses.edit"), async (req, res) => {
   const { title, amount, categoryId, note, date } = req.body;
   try {
     const expense = await prisma.expense.update({
@@ -107,7 +122,7 @@ router.put("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
   } catch { res.status(500).json({ error: "Could not update expense" }); }
 });
 
-router.delete("/:id", authorize("ADMIN", "MANAGER"), async (req, res) => {
+router.delete("/:id", authorize("ADMIN", "MANAGER"), checkPermission("expenses.delete"), async (req, res) => {
   try {
     await prisma.expense.delete({ where: { id: parseInt(req.params.id) } });
     res.json({ message: "Expense deleted" });

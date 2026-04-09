@@ -2,7 +2,7 @@
 
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -53,7 +53,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // Register a new customer
-router.post("/", async (req, res) => {
+router.post("/", checkPermission("customers.create"), async (req, res) => {
   const { name, phone, email, address } = req.body;
 
   if (!name) {
@@ -74,7 +74,7 @@ router.post("/", async (req, res) => {
 });
 
 // Update customer details
-router.put("/:id", async (req, res) => {
+router.put("/:id", checkPermission("customers.edit"), async (req, res) => {
   const { name, phone, email, address } = req.body;
   const id = parseInt(req.params.id);
 
@@ -89,8 +89,7 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-// Delete a customer record - admin only
-router.delete("/:id", authorize("ADMIN"), async (req, res) => {
+router.delete("/:id", authorize("ADMIN"), checkPermission("customers.delete"), async (req, res) => {
   try {
     await prisma.customer.delete({ where: { id: parseInt(req.params.id) } });
     res.json({ message: "Customer deleted" });

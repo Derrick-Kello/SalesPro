@@ -3,7 +3,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
 
@@ -23,8 +23,7 @@ router.get("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
   }
 });
 
-// Create a new user account
-router.post("/", authorize("ADMIN"), async (req, res) => {
+router.post("/", authorize("ADMIN"), checkPermission("users.create"), async (req, res) => {
   const { username, password, fullName, role, branchId } = req.body;
 
   if (!username || !password || !fullName) {
@@ -46,8 +45,7 @@ router.post("/", authorize("ADMIN"), async (req, res) => {
   }
 });
 
-// Update a users details or reset their password
-router.put("/:id", authorize("ADMIN"), async (req, res) => {
+router.put("/:id", authorize("ADMIN"), checkPermission("users.edit"), async (req, res) => {
   const { fullName, role, password, isActive, branchId } = req.body;
   const id = parseInt(req.params.id);
 
@@ -71,7 +69,7 @@ router.put("/:id", authorize("ADMIN"), async (req, res) => {
 });
 
 // Deactivate a user instead of deleting them - keeps the history intact
-router.delete("/:id", authorize("ADMIN"), async (req, res) => {
+router.delete("/:id", authorize("ADMIN"), checkPermission("users.deactivate"), async (req, res) => {
   const id = parseInt(req.params.id);
   try {
     await prisma.user.update({ where: { id }, data: { isActive: false } });

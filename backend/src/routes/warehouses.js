@@ -1,6 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
-const { authenticate, authorize } = require("../middleware/auth");
+const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
 router.use(authenticate);
@@ -19,7 +19,7 @@ router.get("/", authorize("ADMIN", "MANAGER"), async (req, res) => {
   }
 });
 
-router.post("/", authorize("ADMIN"), async (req, res) => {
+router.post("/", authorize("ADMIN"), checkPermission("warehouses.create"), async (req, res) => {
   const { name, location, branchId } = req.body;
   if (!name) return res.status(400).json({ error: "Warehouse name is required" });
   try {
@@ -38,7 +38,7 @@ router.post("/", authorize("ADMIN"), async (req, res) => {
   }
 });
 
-router.put("/:id", authorize("ADMIN"), async (req, res) => {
+router.put("/:id", authorize("ADMIN"), checkPermission("warehouses.edit"), async (req, res) => {
   const { name, location, branchId, isActive } = req.body;
   try {
     const warehouse = await prisma.warehouse.update({
