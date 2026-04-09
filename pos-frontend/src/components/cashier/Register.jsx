@@ -7,7 +7,7 @@ import Modal from '../Modal'
 import BarcodeDisplay from '../BarcodeDisplay'
 import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle } from 'lucide-react'
 
-const STORE_NAME = 'My Store'
+const STORE_NAME = 'SalesPro'
 
 const PAY_METHODS = [
   { key: 'CASH',         label: 'Cash',         icon: Banknote },
@@ -219,6 +219,36 @@ export default function Register() {
       setCustomerOpen(false)
       setNewCust({ name: '', phone: '', email: '' })
     } catch (err) { alert(err.message) }
+  }
+
+  function printReceipt() {
+    const el = document.getElementById('receipt-print')
+    if (!el) return
+    const win = window.open('', '_blank', 'width=320,height=600')
+    win.document.write(`<!DOCTYPE html><html><head><title>Receipt</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padding: 4mm; color: #000; }
+.receipt-header { text-align: center; margin-bottom: 8px; }
+.receipt-header h2 { font-size: 16px; font-weight: 700; letter-spacing: 1px; margin-bottom: 2px; }
+.receipt-branch { font-size: 13px; font-weight: 700; margin-bottom: 2px; }
+.receipt-header p { font-size: 11px; color: #555; }
+.receipt-meta { font-size: 11px; line-height: 1.6; }
+.receipt-divider { border: none; border-top: 1px dashed #000; margin: 6px 0; }
+.receipt-items-header { display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; text-transform: uppercase; color: #555; margin-bottom: 2px; }
+.receipt-item { display: flex; justify-content: space-between; font-size: 11px; margin: 3px 0; }
+.receipt-totals { margin-top: 4px; }
+.receipt-total-row { display: flex; justify-content: space-between; font-size: 11px; padding: 2px 0; }
+.receipt-total-row.final { font-weight: 700; font-size: 14px; border-top: 1px dashed #000; padding-top: 6px; margin-top: 4px; }
+.receipt-footer { text-align: center; margin-top: 10px; font-size: 10px; color: #555; }
+.receipt-footer p { margin: 2px 0; }
+@media print { @page { size: 80mm auto; margin: 0; } body { width: 72mm; padding: 4mm; } }
+</style></head><body>`)
+    win.document.write(el.innerHTML)
+    win.document.write('</body></html>')
+    win.document.close()
+    win.focus()
+    setTimeout(() => { win.print(); win.close() }, 300)
   }
 
   return (
@@ -518,7 +548,7 @@ export default function Register() {
             <>
               <button
                 className="btn btn-outline"
-                onClick={() => window.print()}
+                onClick={() => printReceipt()}
                 style={{ display: 'flex', alignItems: 'center', gap: 6 }}
               >
                 <Printer size={14} strokeWidth={2} /> Print
@@ -529,17 +559,24 @@ export default function Register() {
             </>
           }
         >
-          <div className="receipt">
+          <div className="receipt" id="receipt-print">
             <div className="receipt-header">
               <h2>{STORE_NAME}</h2>
-              <p>Official Receipt</p>
+              {lastSale.branch?.name && <p className="receipt-branch">{lastSale.branch.name}</p>}
+              <p>Sales Receipt</p>
             </div>
             <hr className="receipt-divider" />
-            <div><strong>Transaction #:</strong> {lastSale.id}</div>
-            <div><strong>Date:</strong> {new Date(lastSale.createdAt).toLocaleString()}</div>
-            <div><strong>Cashier:</strong> {lastSale.user.fullName}</div>
-            {lastSale.customer && <div><strong>Customer:</strong> {lastSale.customer.name}</div>}
+            <div className="receipt-meta">
+              <div><strong>Receipt #:</strong> {lastSale.id}</div>
+              <div><strong>Date:</strong> {new Date(lastSale.createdAt).toLocaleString()}</div>
+              <div><strong>Cashier:</strong> {lastSale.user.fullName}</div>
+              {lastSale.customer && <div><strong>Customer:</strong> {lastSale.customer.name}</div>}
+            </div>
             <hr className="receipt-divider" />
+            <div className="receipt-items-header">
+              <span>Item</span>
+              <span>Amt</span>
+            </div>
             {lastSale.saleItems.map(i => (
               <div key={i.id} className="receipt-item">
                 <span>{i.product.name} x{i.quantity} @ {fmt(i.unitPrice)}</span>
@@ -554,11 +591,14 @@ export default function Register() {
               {lastSale.shipping > 0 && <div className="receipt-total-row"><span>Shipping</span><span>{fmt(lastSale.shipping)}</span></div>}
               <div className="receipt-total-row final"><span>TOTAL</span><span>{fmt(lastSale.grandTotal)}</span></div>
               <div className="receipt-total-row"><span>Payment</span><span>{lastSale.payment.method.replace('_', ' ')}</span></div>
-              {lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Amount Paid</span><span>{fmt(lastSale.payment.amountPaid)}</span></div>}
+              {lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Paid</span><span>{fmt(lastSale.payment.amountPaid)}</span></div>}
               {lastSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>{fmt(lastSale.payment.change)}</span></div>}
             </div>
             <hr className="receipt-divider" />
-            <div className="receipt-footer"><p>Thank you for shopping at {STORE_NAME}!</p></div>
+            <div className="receipt-footer">
+              <p>Thank you for your purchase!</p>
+              <p>{STORE_NAME}{lastSale.branch?.name ? ` — ${lastSale.branch.name}` : ''}</p>
+            </div>
           </div>
         </Modal>
       )}

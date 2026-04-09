@@ -1344,20 +1344,25 @@ body {
 ———————————————————————————————— */
 .receipt {
   font-family: 'Courier New', monospace;
-  font-size: 13px;
-  max-width: 340px;
+  font-size: 12px;
+  max-width: 300px;
   margin: 0 auto;
+  line-height: 1.4;
 }
 
-.receipt-header { text-align: center; margin-bottom: 16px; }
-.receipt-header h2 { font-size: 22px; font-weight: 700; letter-spacing: 2px; }
-.receipt-header p { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
-.receipt-divider { border: none; border-top: 1px dashed #ccc; margin: 12px 0; }
-.receipt-item { display: flex; justify-content: space-between; margin: 5px 0; font-size: 12.5px; }
-.receipt-totals { margin-top: 8px; }
-.receipt-total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12.5px; }
-.receipt-total-row.final { font-weight: 700; font-size: 16px; border-top: 1px dashed #ccc; padding-top: 10px; margin-top: 6px; }
-.receipt-footer { text-align: center; margin-top: 16px; color: var(--text-muted); font-size: 12px; }
+.receipt-header { text-align: center; margin-bottom: 10px; }
+.receipt-header h2 { font-size: 18px; font-weight: 700; letter-spacing: 1px; margin-bottom: 2px; }
+.receipt-branch { font-size: 13px; font-weight: 700; color: var(--text); margin: 2px 0; }
+.receipt-header p { color: var(--text-muted); font-size: 11px; margin-top: 2px; }
+.receipt-meta { font-size: 11px; line-height: 1.6; }
+.receipt-divider { border: none; border-top: 1px dashed #ccc; margin: 8px 0; }
+.receipt-items-header { display: flex; justify-content: space-between; font-size: 10px; font-weight: 700; text-transform: uppercase; color: var(--text-light); margin-bottom: 2px; }
+.receipt-item { display: flex; justify-content: space-between; margin: 3px 0; font-size: 11.5px; }
+.receipt-totals { margin-top: 4px; }
+.receipt-total-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 11.5px; }
+.receipt-total-row.final { font-weight: 700; font-size: 15px; border-top: 1px dashed #ccc; padding-top: 8px; margin-top: 4px; }
+.receipt-footer { text-align: center; margin-top: 12px; color: var(--text-muted); font-size: 10px; }
+.receipt-footer p { margin: 2px 0; }
 
 /* ————————————————————————————————
    CASHIER SALES SUB-TABS
@@ -1444,10 +1449,12 @@ body {
 /* ————————————————————————————————
    PRINT
 ———————————————————————————————— */
+/* Receipt print styles are handled by the popup print window.
+   This fallback covers window.print() on the main page. */
 @media print {
   @page {
-    size: A5 portrait;
-    margin: 15mm 18mm;
+    size: 80mm auto;
+    margin: 0;
   }
 
   body * { visibility: hidden; }
@@ -1455,23 +1462,28 @@ body {
   .receipt,
   .receipt * { visibility: visible; }
 
-  /* reset positioning — let the page flow normally */
   .receipt {
-    position: static;
-    width: 100%;
-    max-width: 100%;
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 72mm;
+    max-width: 72mm;
+    padding: 4mm;
     margin: 0;
     font-family: 'Courier New', monospace;
     font-size: 10pt;
     color: #000;
   }
 
-  .receipt-header h2         { font-size: 16pt; }
-  .receipt-header p          { font-size: 9pt; }
-  .receipt-item              { font-size: 9.5pt; }
-  .receipt-total-row         { font-size: 9.5pt; }
-  .receipt-total-row.final   { font-size: 13pt; }
-  .receipt-footer            { font-size: 9pt; }
+  .receipt-header h2         { font-size: 14pt; }
+  .receipt-branch            { font-size: 11pt; font-weight: 700; }
+  .receipt-header p          { font-size: 8pt; }
+  .receipt-meta              { font-size: 8pt; }
+  .receipt-items-header      { font-size: 7pt; }
+  .receipt-item              { font-size: 8.5pt; }
+  .receipt-total-row         { font-size: 8.5pt; }
+  .receipt-total-row.final   { font-size: 11pt; }
+  .receipt-footer            { font-size: 7.5pt; }
   .receipt-divider           { border-top: 1px dashed #000; }
 }
 
@@ -1603,34 +1615,7 @@ body {
   color: #111;
 }
 
-@media print {
-  body > * { display: none !important; }
-
-  /* Show only the print sheet inside the modal */
-  .modal-overlay,
-  .modal-overlay * { display: revert !important; }
-
-  .modal-overlay .modal-header,
-  .modal-overlay .modal-footer,
-  .modal-overlay .modal-close,
-  .modal-overlay > .modal > *:not(.modal-body) { display: none !important; }
-
-  .modal-overlay .modal-body .barcode-print-sheet {
-    display: flex !important;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 0;
-  }
-
-  /* Hide the selection list, only show the print sheet */
-  .modal-overlay .modal-body > *:not(.barcode-print-sheet) { display: none !important; }
-
-  .barcode-label {
-    border: 1px solid #999;
-    page-break-inside: avoid;
-    break-inside: avoid;
-  }
-}
+/* Barcode label print — triggered from barcode popup window, not main page */
 
 /* ── Sidebar submenu groups ── */
 .sidebar-submenu {
