@@ -10,7 +10,66 @@ const router = express.Router();
 const INVENTORY_PURCHASES_CATEGORY = "Inventory Purchases";
 const PURCHASE_RETURNS_CATEGORY = "Purchase Returns";
 
-module.exports = router;
+/**
+ * Mirrors GET /sales: only constrain `Sale.createdAt` when startDate and/or endDate are present.
+ * If both are omitted, no date filter → same scope as Sales History default list (all periods).
+ */
+function prismaSaleCreatedAtClause(startDate, endDate) {
+  if (!startDate && !endDate) return {};
+  const createdAt = {};
+  if (startDate) createdAt.gte = new Date(startDate);
+  if (endDate) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    createdAt.lte = end;
+  }
+  return { createdAt };
+}
+
+/** Expense rows use calendar `date` — same boundary rules as sales list. */
+function prismaExpenseDateClause(startDate, endDate) {
+  if (!startDate && !endDate) return {};
+  const date = {};
+  if (startDate) date.gte = new Date(startDate);
+  if (endDate) {
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    date.lte = end;
+  }
+  return { date };
+}
+
+/** COGS from completed sales; date filters match GET /sales semantics. */
+async function queryProfitLossCogs(startDate, endDate, branchId) {
+  const predicates = [`s.status = 'COMPLETED'`];
+  const binds = [];
+  let p = 1;
+  if (startDate) {
+    predicates.push(`s."createdAt" >= $${p}`);
+    binds.push(new Date(startDate));
+    p++;
+  }
+  if (endDate) {
+    const ed = new Date(endDate);
+    ed.setHours(23, 59, 59, 999);
+    predicates.push(`s."createdAt" <= $${p}`);
+    binds.push(ed);
+    p++;
+  }
+  if (branchId !== undefined && branchId !== null) {
+    predicates.push(`s."branchId" = $${p}`);
+    binds.push(parseInt(branchId, 10));
+    p++;
+  }
+  const sql = `
+        SELECT COALESCE(SUM(si.quantity * p."costPrice"), 0)::float AS "cogs"
+        FROM sale_items si
+        JOIN products p ON p.id = si."productId"
+        JOIN sales s ON s.id = si."saleId"
+        WHERE ${predicates.join(" AND ")}
+      `;
+  return prisma.$queryRawUnsafe(sql, ...binds);
+}
 
 function cached(key, fn) {
   const hit = cache.get(key);
@@ -125,22 +184,23 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
     const branchId = resolveBranchId(req);
     const { startDate, endDate } = req.query;
 
-    const now = new Date();
-    const defaultStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    defaultStart.setHours(0, 0, 0, 0);
-    const start = startDate ? new Date(startDate) : defaultStart;
-    const end = endDate ? (() => {
-      const d = new Date(endDate);
-      d.setHours(23, 59, 59, 999);
-      return d;
-    })() : (() => {
-      const d = new Date(now);
-      d.setHours(23, 59, 59, 999);
-      return d;
-    })();
-
     const saleBranch = branchId ? { branchId } : {};
     const expenseBranch = branchId ? { branchId } : {};
+
+    const saleDateClause = prismaSaleCreatedAtClause(startDate, endDate);
+    const expenseDateClause = prismaExpenseDateClause(startDate, endDate);
+
+    const saleWhereCompleted = {
+      status: "COMPLETED",
+      ...saleBranch,
+      ...saleDateClause,
+    };
+
+    const saleWhereRefunded = {
+      status: "REFUNDED",
+      ...saleBranch,
+      ...saleDateClause,
+    };
 
     const [purchaseCat, returnCat] = await Promise.all([
       prisma.expenseCategory.findFirst({ where: { name: INVENTORY_PURCHASES_CATEGORY } }),
@@ -149,6 +209,7 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
 
     const [
       salesCompleted,
+      discountShippingTotalsAgg,
       salesRefunded,
       paymentsAgg,
       expensesAgg,
@@ -157,20 +218,16 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       cogsRow,
     ] = await Promise.all([
       prisma.sale.aggregate({
-        where: {
-          status: "COMPLETED",
-          createdAt: { gte: start, lte: end },
-          ...saleBranch,
-        },
+        where: saleWhereCompleted,
         _sum: { grandTotal: true },
         _count: { id: true },
       }),
       prisma.sale.aggregate({
-        where: {
-          status: "REFUNDED",
-          createdAt: { gte: start, lte: end },
-          ...saleBranch,
-        },
+        where: saleWhereCompleted,
+        _sum: { discount: true, shipping: true },
+      }),
+      prisma.sale.aggregate({
+        where: saleWhereRefunded,
         _sum: { grandTotal: true },
         _count: { id: true },
       }),
@@ -178,16 +235,16 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
         where: {
           sale: {
             status: "COMPLETED",
-            createdAt: { gte: start, lte: end },
             ...saleBranch,
+            ...saleDateClause,
           },
         },
         _sum: { amountPaid: true },
       }),
       prisma.expense.aggregate({
         where: {
-          date: { gte: start, lte: end },
           ...expenseBranch,
+          ...expenseDateClause,
         },
         _sum: { amount: true },
       }),
@@ -195,8 +252,8 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
         ? prisma.expense.aggregate({
             where: {
               categoryId: purchaseCat.id,
-              date: { gte: start, lte: end },
               ...expenseBranch,
+              ...expenseDateClause,
             },
             _sum: { amount: true },
           })
@@ -205,25 +262,13 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
         ? prisma.expense.aggregate({
             where: {
               categoryId: returnCat.id,
-              date: { gte: start, lte: end },
               ...expenseBranch,
+              ...expenseDateClause,
             },
             _sum: { amount: true },
           })
         : Promise.resolve({ _sum: { amount: null } }),
-      prisma.$queryRawUnsafe(
-        `
-        SELECT COALESCE(SUM(si.quantity * p."costPrice"), 0)::float AS "cogs"
-        FROM sale_items si
-        JOIN products p ON p.id = si."productId"
-        JOIN sales s ON s.id = si."saleId"
-        WHERE s.status = 'COMPLETED'
-          AND s."createdAt" >= $1 AND s."createdAt" <= $2
-          ${branchId ? `AND s."branchId" = ${parseInt(branchId, 10)}` : ""}
-        `,
-        start,
-        end,
-      ),
+      queryProfitLossCogs(startDate, endDate, branchId),
     ]);
 
     const salesMade = salesCompleted._sum.grandTotal ?? 0;
@@ -236,10 +281,38 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
     const cogs = cogsRow[0]?.cogs ?? 0;
     const grossProfit = netRevenue - cogs;
     const netProfit = grossProfit - totalExpenses;
+    const totalDiscountApplied = discountShippingTotalsAgg._sum.discount ?? 0;
+    const totalShippingCharges = discountShippingTotalsAgg._sum.shipping ?? 0;
+
+    const discountShippingByBranchRows = await prisma.sale.groupBy({
+      by: ["branchId"],
+      where: saleWhereCompleted,
+      _sum: { discount: true, shipping: true },
+    });
+
+    const branchIdsWithSales = discountShippingByBranchRows.map((r) => r.branchId).filter((id) => id != null);
+    const branchRecords = branchIdsWithSales.length
+      ? await prisma.branch.findMany({
+          where: { id: { in: branchIdsWithSales } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const branchNameById = Object.fromEntries(branchRecords.map((b) => [b.id, b.name]));
+
+    const discountShippingByBranch = discountShippingByBranchRows
+      .map((r) => ({
+        branchId: r.branchId,
+        branchName: r.branchId == null ? "No branch" : (branchNameById[r.branchId] || "Unknown branch"),
+        totalDiscount: r._sum.discount ?? 0,
+        totalShipping: r._sum.shipping ?? 0,
+      }))
+      .sort((a, b) => a.branchName.localeCompare(b.branchName));
 
     res.json({
-      startDate: start.toISOString(),
-      endDate: end.toISOString(),
+      startDate: startDate || null,
+      endDate: endDate || null,
+      /** When false, aggregates use every completed sale (same as Sales History without date filters). */
+      dateFiltered: !!(startDate || endDate),
       branchId: branchId ?? null,
       salesMade,
       salesReturns,
@@ -251,6 +324,9 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       costOfGoodsSold: cogs,
       grossProfit,
       netProfit,
+      totalDiscountApplied,
+      totalShippingCharges,
+      discountShippingByBranch,
       completedTransactionCount: salesCompleted._count.id,
       refundedTransactionCount: salesRefunded._count.id,
       purchaseCategoryMissing: !purchaseCat,
@@ -406,3 +482,5 @@ router.get("/inventory", authenticate, authorize("ADMIN", "MANAGER"), async (req
     res.status(500).json({ error: "Could not generate inventory report" });
   }
 });
+
+module.exports = router;

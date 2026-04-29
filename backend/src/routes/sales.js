@@ -6,6 +6,7 @@ const prisma = require("../prisma/client");
 const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { invalidate } = require("../cache");
 const { resolveBranchId } = require("../utils/branchScope");
+const paystack = require("../lib/paystack");
 
 const router = express.Router();
 router.use(authenticate);
@@ -72,7 +73,7 @@ router.get("/:id", async (req, res) => {
 
 // Process a new sale
 router.post("/", async (req, res) => {
-  const { customerId, items, discount, tax, shipping, paymentMethod, amountPaid, paymentReference } = req.body;
+  const { customerId, items, discount, tax, shipping, paymentMethod, amountPaid, paymentReference, currency: saleCurrency } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: "Cart is empty" });
@@ -145,6 +146,27 @@ router.post("/", async (req, res) => {
     const shippingAmount = parseFloat(shipping) || 0;
     const grandTotal = totalAmount - discountAmount + taxAmount + shippingAmount;
     const change = (parseFloat(amountPaid) || 0) - grandTotal;
+
+    if (paymentMethod === "PAYSTACK") {
+      if (!paymentReference || !String(paymentReference).trim()) {
+        return res.status(400).json({ error: "Paystack payment reference is required" });
+      }
+      if (!paystack.isConfigured()) {
+        return res.status(503).json({ error: "Paystack is not configured on the server" });
+      }
+      const curr = (saleCurrency || "NGN").toUpperCase();
+      try {
+        await paystack.verifyPaymentMatches(paymentReference, grandTotal, curr);
+      } catch (e) {
+        return res.status(400).json({ error: e.message || "Paystack verification failed" });
+      }
+      const dup = await prisma.payment.findFirst({
+        where: { reference: paymentReference, method: "PAYSTACK" },
+      });
+      if (dup) {
+        return res.status(400).json({ error: "This Paystack reference was already used for a sale" });
+      }
+    }
 
     const sale = await prisma.$transaction(async (tx) => {
       const newSale = await tx.sale.create({

@@ -228,6 +228,7 @@ enum PaymentMethod {
   CASH
   MOBILE_MONEY
   CARD
+  PAYSTACK
 }
 
 // Suppliers who provide products to the store

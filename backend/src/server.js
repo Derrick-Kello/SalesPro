@@ -18,6 +18,7 @@ const branchRoutes = require("./routes/branches");
 const warehouseRoutes = require("./routes/warehouses");
 const transferRoutes = require("./routes/transfers");
 const settingsRoutes = require("./routes/settings");
+const paystackRoutes = require("./routes/paystack");
 
 const prisma = require("./prisma/client");
 
@@ -91,6 +92,7 @@ app.use("/api/branches", branchRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/transfers", transferRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/payments/paystack", paystackRoutes);
 
 // Simple health check so you can confirm the server is running
 app.get("/api/health", (req, res) => {
