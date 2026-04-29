@@ -97,7 +97,7 @@ model BranchInventory {
   supplier      String?
 
   branch  Branch  @relation(fields: [branchId], references: [id])
-  product Product @relation(fields: [productId], references: [id])
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([branchId, productId])
   @@map("branch_inventory")
@@ -119,7 +119,7 @@ model StockTransfer {
   note             String?
   createdAt        DateTime @default(now())
 
-  product        Product   @relation(fields: [productId], references: [id])
+  product        Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
   fromBranch     Branch?   @relation("FromBranch", fields: [fromBranchId], references: [id])
   fromWarehouse  Warehouse? @relation("FromWarehouse", fields: [fromWarehouseId], references: [id])
   toBranch       Branch?   @relation("ToBranch", fields: [toBranchId], references: [id])
@@ -185,7 +185,7 @@ model Inventory {
   supplier      String?
   updatedAt     DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id])
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@map("inventory")
 }

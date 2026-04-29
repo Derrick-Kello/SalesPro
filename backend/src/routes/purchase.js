@@ -34,6 +34,68 @@ async function warehouseForUserOr404(req, res, idParam) {
 }
 
 /**
+ * Inventory + receipt in one transaction (supplier required — trimmed non-empty).
+ */
+async function executeReceive(tx, whId, productId, quantity, supplierTrim, note, userId) {
+  const product = await tx.product.findUnique({ where: { id: productId } });
+  if (!product) {
+    const e = new Error("Product not found");
+    e.status = 404;
+    throw e;
+  }
+  if (!product.isActive) {
+    const e = new Error("Product is inactive");
+    e.status = 400;
+    throw e;
+  }
+
+  const unitCost = product.costPrice || 0;
+  const lineValue = quantity * unitCost;
+
+  await tx.warehouseInventory.upsert({
+    where: { warehouseId_productId: { warehouseId: whId, productId } },
+    update: {
+      quantity: { increment: quantity },
+      supplier: supplierTrim,
+    },
+    create: {
+      warehouseId: whId,
+      productId,
+      quantity,
+      supplier: supplierTrim,
+    },
+  });
+
+  const receipt = await tx.warehouseStockReceipt.create({
+    data: {
+      warehouseId: whId,
+      productId,
+      quantity,
+      unitCostSnapshot: unitCost,
+      lineValueTotal: lineValue,
+      supplier: supplierTrim,
+      note: note && String(note).trim() ? String(note).trim() : null,
+      receivedById: userId,
+    },
+    include: {
+      product: { select: { id: true, name: true, category: true, costPrice: true } },
+      warehouse: { select: { id: true, name: true, branchId: true } },
+      receivedBy: { select: { id: true, fullName: true } },
+    },
+  });
+
+  const updatedWi = await tx.warehouseInventory.findUnique({
+    where: { warehouseId_productId: { warehouseId: whId, productId } },
+    include: {
+      product: { select: { id: true, name: true, category: true, costPrice: true } },
+      warehouse: { select: { id: true, name: true } },
+    },
+  });
+
+  return { receipt, warehouseInventory: updatedWi };
+}
+
+/**
  * Receive goods into warehouse inventory + immutable receipt row (Purchase flow).
  */
 router.post(
@@ -49,76 +111,127 @@ router.post(
     const pid =
       productId !== undefined && productId !== "" ? parseInt(productId, 10) : null;
     const qty = quantity !== undefined && quantity !== "" ? parseInt(quantity, 10) : NaN;
+    const supplierTrim = supplier != null ? String(supplier).trim() : "";
 
     if (!Number.isFinite(whId) || !Number.isFinite(pid) || !Number.isFinite(qty) || qty <= 0) {
       return res.status(400).json({
         error: "warehouseId, productId, and quantity (positive integer) are required",
       });
     }
+    if (!supplierTrim) {
+      return res.status(400).json({ error: "Supplier is required" });
+    }
 
     const wh = await warehouseForUserOr404(req, res, String(whId));
     if (!wh) return;
 
     try {
-      const product = await prisma.product.findUnique({ where: { id: pid } });
-      if (!product) return res.status(404).json({ error: "Product not found" });
-      if (!product.isActive) return res.status(400).json({ error: "Product is inactive" });
-
-      const unitCost = product.costPrice || 0;
-      const lineValue = qty * unitCost;
-
-      const result = await prisma.$transaction(async (tx) => {
-        await tx.warehouseInventory.upsert({
-          where: { warehouseId_productId: { warehouseId: whId, productId: pid } },
-          update: {
-            quantity: { increment: qty },
-            supplier:
-              supplier !== undefined && supplier !== null && supplier !== ""
-                ? String(supplier)
-                : undefined,
-          },
-          create: {
-            warehouseId: whId,
-            productId: pid,
-            quantity: qty,
-            supplier: supplier || undefined,
-          },
-        });
-
-        const receipt = await tx.warehouseStockReceipt.create({
-          data: {
-            warehouseId: whId,
-            productId: pid,
-            quantity: qty,
-            unitCostSnapshot: unitCost,
-            lineValueTotal: lineValue,
-            supplier: supplier || null,
-            note: note || null,
-            receivedById: req.user.id,
-          },
-          include: {
-            product: { select: { id: true, name: true, category: true, costPrice: true } },
-            warehouse: { select: { id: true, name: true, branchId: true } },
-            receivedBy: { select: { id: true, fullName: true } },
-          },
-        });
-
-        const updatedWi = await tx.warehouseInventory.findUnique({
-          where: { warehouseId_productId: { warehouseId: whId, productId: pid } },
-          include: {
-            product: { select: { id: true, name: true, category: true, costPrice: true } },
-            warehouse: { select: { id: true, name: true } },
-          },
-        });
-
-        return { receipt, warehouseInventory: updatedWi };
-      });
-
+      const result = await prisma.$transaction((tx) =>
+        executeReceive(tx, whId, pid, qty, supplierTrim, note, req.user.id)
+      );
       res.status(201).json(result);
     } catch (err) {
       console.error("[POST /purchase/warehouse-receipts]", err);
-      res.status(500).json({ error: "Could not record purchase receipt" });
+      const status = err.status || (err.message === "Product not found" ? 404 : 500);
+      if (status >= 500) {
+        return res.status(500).json({ error: "Could not record purchase receipt" });
+      }
+      return res.status(status).json({ error: err.message || "Bad request" });
     }
+  }
+);
+
+/**
+ * Bulk receive (same validations; supplier required on every line).
+ * Body: { warehouseId, lines: [{ productId?, barcode?, quantity, supplier, note? }] }
+ */
+router.post(
+  "/warehouse-receipts/bulk",
+  checkPermission("inventory.adjust"),
+  async (req, res) => {
+    const { warehouseId, lines } = req.body;
+    const whId =
+      warehouseId !== undefined && warehouseId !== ""
+        ? parseInt(warehouseId, 10)
+        : null;
+
+    if (!Number.isFinite(whId) || whId <= 0) {
+      return res.status(400).json({ error: "warehouseId is required" });
+    }
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ error: "lines must be a non-empty array" });
+    }
+
+    const wh = await warehouseForUserOr404(req, res, String(whId));
+    if (!wh) return;
+
+    const success = [];
+    const errors = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const lineNum = i + 1;
+      const supplierTrim = raw?.supplier != null ? String(raw.supplier).trim() : "";
+      if (!supplierTrim) {
+        errors.push({ line: lineNum, error: "Supplier is required" });
+        continue;
+      }
+
+      const qtyRaw = raw?.quantity;
+      const qty = parseInt(qtyRaw, 10);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        errors.push({ line: lineNum, error: "quantity must be a positive integer" });
+        continue;
+      }
+
+      let pid =
+        raw?.productId != null && raw.productId !== ""
+          ? parseInt(raw.productId, 10)
+          : raw?.product_id != null && raw.product_id !== ""
+            ? parseInt(raw.product_id, 10)
+            : NaN;
+
+      const bc =
+        raw?.barcode != null && raw.barcode !== ""
+          ? String(raw.barcode).trim()
+          : null;
+
+      try {
+        if (!Number.isFinite(pid) || pid <= 0) {
+          if (!bc) {
+            errors.push({
+              line: lineNum,
+              error: "Provide productId or barcode",
+            });
+            continue;
+          }
+          const byBc = await prisma.product.findUnique({ where: { barcode: bc } });
+          if (!byBc) {
+            errors.push({ line: lineNum, error: `Unknown barcode "${bc}"` });
+            continue;
+          }
+          pid = byBc.id;
+        }
+
+        const result = await prisma.$transaction((tx) =>
+          executeReceive(tx, whId, pid, qty, supplierTrim, raw?.note, req.user.id)
+        );
+        success.push({ line: lineNum, receiptId: result.receipt.id, productId: pid });
+      } catch (err) {
+        errors.push({
+          line: lineNum,
+          error: err.message === "Product is inactive" ? err.message : err.message || "Failed",
+        });
+      }
+    }
+
+    res.json({
+      warehouseId: whId,
+      createdCount: success.length,
+      failedCount: errors.length,
+      success,
+      errors,
+    });
   }
 );
 
@@ -163,8 +276,7 @@ router.get("/warehouse-receipts", async (req, res) => {
       });
     }
 
-    const where =
-      andClauses.length === 0 ? {} : { AND: andClauses };
+    const where = andClauses.length === 0 ? {} : { AND: andClauses };
 
     const rows = await prisma.warehouseStockReceipt.findMany({
       where,
