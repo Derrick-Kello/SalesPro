@@ -19,6 +19,7 @@ const warehouseRoutes = require("./routes/warehouses");
 const transferRoutes = require("./routes/transfers");
 const settingsRoutes = require("./routes/settings");
 const paystackRoutes = require("./routes/paystack");
+const purchaseRoutes = require("./routes/purchase");
 
 const prisma = require("./prisma/client");
 
@@ -91,6 +92,7 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/branches", branchRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/transfers", transferRoutes);
+app.use("/api/purchase", purchaseRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/payments/paystack", paystackRoutes);
 

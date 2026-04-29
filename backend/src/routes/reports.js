@@ -39,9 +39,9 @@ function prismaExpenseDateClause(startDate, endDate) {
   return { date };
 }
 
-/** `sales s` predicates for Profit & Loss (completed sales; same boundaries as GET /sales). */
-function profitLossCompletedSalePredicates(startDate, endDate, branchId) {
-  const predicates = [`s.status = 'COMPLETED'`];
+/** Invoiced sales = full or partial checkout (COGS/discount/shipping totals; inventory already moved). */
+function profitLossRevenueSalePredicates(startDate, endDate, branchId) {
+  const predicates = [`s.status IN ('COMPLETED','PARTIALLY_PAID')`];
   const binds = [];
   let p = 1;
   if (startDate) {
@@ -66,7 +66,7 @@ function profitLossCompletedSalePredicates(startDate, endDate, branchId) {
 
 /** COGS from completed sales; date filters match GET /sales semantics. */
 async function queryProfitLossCogs(startDate, endDate, branchId) {
-  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
+  const { predicates, binds } = profitLossRevenueSalePredicates(startDate, endDate, branchId);
   const sql = `
         SELECT COALESCE(SUM(si.quantity * p."costPrice"), 0)::float AS "cogs"
         FROM sale_items si
@@ -79,7 +79,7 @@ async function queryProfitLossCogs(startDate, endDate, branchId) {
 
 /** Sum discount + shipping straight from `sales` (matches list UI / avoids Prisma _sum quirks on Float). */
 async function queryProfitLossDiscountShippingTotals(startDate, endDate, branchId) {
-  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
+  const { predicates, binds } = profitLossRevenueSalePredicates(startDate, endDate, branchId);
   const rows = await prisma.$queryRawUnsafe(
     `
     SELECT COALESCE(SUM(s.discount), 0)::float AS "discount",
@@ -97,7 +97,7 @@ async function queryProfitLossDiscountShippingTotals(startDate, endDate, branchI
 }
 
 async function queryProfitLossDiscountShippingByBranch(startDate, endDate, branchId) {
-  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
+  const { predicates, binds } = profitLossRevenueSalePredicates(startDate, endDate, branchId);
   const rows = await prisma.$queryRawUnsafe(
     `
     SELECT s."branchId" AS "branchId",
@@ -115,6 +115,46 @@ async function queryProfitLossDiscountShippingByBranch(startDate, endDate, branc
     totalDiscount: Number(r.totalDiscount ?? 0),
     totalShipping: Number(r.totalShipping ?? 0),
   }));
+}
+
+/** Money still owed on partial checkouts — not yet received as cash card on P&amp;L. */
+async function queryProfitLossPartialOutstanding(startDate, endDate, branchId) {
+  const predicates = [`s.status = 'PARTIALLY_PAID'`];
+  const binds = [];
+  let p = 1;
+  if (startDate) {
+    predicates.push(`s."createdAt" >= $${p}`);
+    binds.push(new Date(startDate));
+    p++;
+  }
+  if (endDate) {
+    const ed = new Date(endDate);
+    ed.setHours(23, 59, 59, 999);
+    predicates.push(`s."createdAt" <= $${p}`);
+    binds.push(ed);
+    p++;
+  }
+  if (branchId !== undefined && branchId !== null) {
+    predicates.push(`s."branchId" = $${p}`);
+    binds.push(parseInt(branchId, 10));
+    p++;
+  }
+  const rows = await prisma.$queryRawUnsafe(
+    `
+    SELECT
+      COUNT(*)::int AS "partialCount",
+      COALESCE(SUM(GREATEST(0::float, s."grandTotal" - pm."amountPaid")), 0)::float AS "outstandingTotal"
+    FROM sales s
+    INNER JOIN payments pm ON pm."saleId" = s.id
+    WHERE ${predicates.join(" AND ")}
+    `,
+    ...binds
+  );
+  const row = rows[0];
+  return {
+    partialCount: Number(row?.partialCount ?? 0),
+    outstandingTotal: Number(row?.outstandingTotal ?? 0),
+  };
 }
 
 function cached(key, fn) {
@@ -236,7 +276,13 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
     const saleDateClause = prismaSaleCreatedAtClause(startDate, endDate);
     const expenseDateClause = prismaExpenseDateClause(startDate, endDate);
 
-    const saleWhereCompleted = {
+    const saleWhereInvoiced = {
+      status: { in: ["COMPLETED", "PARTIALLY_PAID"] },
+      ...saleBranch,
+      ...saleDateClause,
+    };
+
+    const saleWhereFullPaid = {
       status: "COMPLETED",
       ...saleBranch,
       ...saleDateClause,
@@ -254,7 +300,7 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
     ]);
 
     const [
-      salesCompleted,
+      salesInvoiced,
       discountShippingTotals,
       discountShippingByBranchRaw,
       salesRefunded,
@@ -263,9 +309,11 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       purchasesAgg,
       returnsAgg,
       cogsRow,
+      partialOutstanding,
+      fullPaidSaleCount,
     ] = await Promise.all([
       prisma.sale.aggregate({
-        where: saleWhereCompleted,
+        where: saleWhereInvoiced,
         _sum: { grandTotal: true },
         _count: { id: true },
       }),
@@ -279,7 +327,7 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       prisma.payment.aggregate({
         where: {
           sale: {
-            status: "COMPLETED",
+            status: { in: ["COMPLETED", "PARTIALLY_PAID"] },
             ...saleBranch,
             ...saleDateClause,
           },
@@ -314,9 +362,11 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
           })
         : Promise.resolve({ _sum: { amount: null } }),
       queryProfitLossCogs(startDate, endDate, branchId),
+      queryProfitLossPartialOutstanding(startDate, endDate, branchId),
+      prisma.sale.count({ where: saleWhereFullPaid }),
     ]);
 
-    const salesMade = salesCompleted._sum.grandTotal ?? 0;
+    const salesMade = salesInvoiced._sum.grandTotal ?? 0;
     const salesReturns = salesRefunded._sum.grandTotal ?? 0;
     const netRevenue = salesMade - salesReturns;
     const totalPaymentsReceived = paymentsAgg._sum.amountPaid ?? 0;
@@ -366,7 +416,13 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       totalDiscountApplied,
       totalShippingCharges,
       discountShippingByBranch,
-      completedTransactionCount: salesCompleted._count.id,
+      /** Fully paid invoices (sale closed). */
+      completedTransactionCount: fullPaidSaleCount,
+      /** Invoiced includes partial checkouts whose balance may still be open. */
+      invoicedTransactionCount: salesInvoiced._count.id,
+      partiallyPaidSalesCount: partialOutstanding.partialCount,
+      /** Amount still owed on partial invoices — excluded from Payments received until collected. */
+      outstandingReceivables: partialOutstanding.outstandingTotal,
       refundedTransactionCount: salesRefunded._count.id,
       purchaseCategoryMissing: !purchaseCat,
       purchaseReturnCategoryMissing: !returnCat,
@@ -519,6 +575,233 @@ router.get("/inventory", authenticate, authorize("ADMIN", "MANAGER"), async (req
     res.json({ lowStockCount: result.filter(i => i.isLowStock).length, inventory: result });
   } catch (err) {
     res.status(500).json({ error: "Could not generate inventory report" });
+  }
+});
+
+// ── Warehouse report (warehouse_inventory + transfer economics + history) ──
+router.get("/warehouse", authenticate, authorize("ADMIN", "MANAGER"), async (req, res) => {
+  try {
+    const scopeBranchId = resolveBranchId(req);
+    const warehouseIdParam =
+      req.query.warehouseId != null && req.query.warehouseId !== ""
+        ? parseInt(req.query.warehouseId, 10)
+        : null;
+    const { startDate, endDate } = req.query;
+
+    const whWhere = { isActive: true };
+    if (!Number.isNaN(warehouseIdParam) && warehouseIdParam !== null && warehouseIdParam > 0) {
+      whWhere.id = warehouseIdParam;
+    }
+    if (scopeBranchId !== undefined && scopeBranchId !== null) {
+      whWhere.branchId = scopeBranchId;
+    }
+
+    const list = await prisma.warehouse.findMany({
+      where: whWhere,
+      orderBy: { name: "asc" },
+      include: { branch: { select: { id: true, name: true } } },
+    });
+
+    const summaries = [];
+    let rollupPieces = 0;
+    let rollupCost = 0;
+    let rollupSkus = 0;
+
+    for (const w of list) {
+      const agg = await prisma.$queryRawUnsafe(
+        `
+        SELECT
+          COUNT(*) FILTER (WHERE wi.quantity > 0)::int AS "skuCount",
+          COALESCE(SUM(wi.quantity), 0)::bigint AS "pieces",
+          COALESCE(SUM(wi.quantity * COALESCE(p."costPrice", 0)), 0)::double precision AS "costTotal"
+        FROM warehouse_inventory wi
+        JOIN products p ON p.id = wi."productId"
+        WHERE wi."warehouseId" = $1
+        `,
+        w.id
+      );
+      const r = agg[0] || {};
+      const skuCount = Number(r.skuCount ?? 0);
+      const pieces = Number(r.pieces ?? 0);
+      const costTotal = Number(r.costTotal ?? 0);
+
+      summaries.push({
+        warehouseId: w.id,
+        warehouseName: w.name,
+        location: w.location,
+        branchId: w.branchId,
+        branchName: w.branch?.name ?? null,
+        distinctSkus: skuCount,
+        totalPieces: pieces,
+        totalCostValue: costTotal,
+        stockNote:
+          pieces === 0
+            ? "No quantities recorded yet — receive stock via Warehouses → Stock (or transfers from a branch)."
+            : null,
+      });
+
+      rollupPieces += pieces;
+      rollupCost += costTotal;
+      rollupSkus += skuCount;
+    }
+
+    /** Product detail when one warehouse is selected */
+    let productLines = [];
+    let productLinesDetailWarehouseId = null;
+    const singleWarehouse = list.length === 1
+      ? list[0]
+      : Number.isFinite(warehouseIdParam)
+        ? list.find((x) => x.id === warehouseIdParam)
+        : null;
+
+    if (singleWarehouse) {
+      productLinesDetailWarehouseId = singleWarehouse.id;
+      const wis = await prisma.warehouseInventory.findMany({
+        where: { warehouseId: singleWarehouse.id, quantity: { gt: 0 } },
+        include: { product: { select: { id: true, name: true, category: true, costPrice: true } } },
+        orderBy: { productId: "asc" },
+      });
+      productLines = wis
+        .map((wi) => {
+          const cp = wi.product?.costPrice ?? 0;
+          return {
+            productId: wi.productId,
+            name: wi.product?.name ?? "—",
+            category: wi.product?.category ?? "—",
+            quantity: wi.quantity,
+            unitCostPrice: cp,
+            lineCostValue: wi.quantity * cp,
+          };
+        })
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    }
+
+    const andClauses = [];
+    if (startDate || endDate) {
+      const dateFilter = { createdAt: {} };
+      if (startDate) dateFilter.createdAt.gte = new Date(startDate);
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.createdAt.lte = end;
+      }
+      andClauses.push(dateFilter);
+    }
+
+    if (scopeBranchId !== undefined && scopeBranchId !== null) {
+      andClauses.push({
+        OR: [
+          { fromBranchId: scopeBranchId },
+          { toBranchId: scopeBranchId },
+          { fromWarehouse: { branchId: scopeBranchId } },
+          { toWarehouse: { branchId: scopeBranchId } },
+        ],
+      });
+    }
+
+    if (!Number.isNaN(warehouseIdParam) && warehouseIdParam && warehouseIdParam > 0) {
+      andClauses.push({
+        OR: [{ fromWarehouseId: warehouseIdParam }, { toWarehouseId: warehouseIdParam }],
+      });
+    }
+
+    const transferWhereBuilt = andClauses.length ? { AND: andClauses } : {};
+
+    const transfersRaw = await prisma.stockTransfer.findMany({
+      where: transferWhereBuilt,
+      take: 750,
+      orderBy: { createdAt: "desc" },
+      include: {
+        product: { select: { name: true } },
+        fromBranch: { select: { name: true } },
+        toBranch: { select: { name: true } },
+        fromWarehouse: { select: { name: true, branchId: true } },
+        toWarehouse: { select: { name: true, branchId: true } },
+        transferredBy: { select: { fullName: true } },
+      },
+    });
+
+    const transferEconomics = {
+      totalLines: 0,
+      totalCostRecorded: 0,
+      outboundFromWarehouseCost: 0,
+      inboundToWarehouseCost: 0,
+      warehouseToWarehouseCost: 0,
+      warehouseToBranchCost: 0,
+      branchToWarehouseCost: 0,
+    };
+
+    for (const t of transfersRaw) {
+      const cost =
+        typeof t.totalValue === "number" ? t.totalValue : (t.quantity || 0) * (t.costPrice || 0);
+      transferEconomics.totalLines += 1;
+      transferEconomics.totalCostRecorded += cost;
+      const fw = Boolean(t.fromWarehouseId);
+      const tw = Boolean(t.toWarehouseId);
+      const fb = Boolean(t.fromBranchId);
+      const tb = Boolean(t.toBranchId);
+      if (fw && !fb) transferEconomics.outboundFromWarehouseCost += cost;
+      if (tw && !tb) transferEconomics.inboundToWarehouseCost += cost;
+      if (fw && tw && !fb && !tb) transferEconomics.warehouseToWarehouseCost += cost;
+      if (fw && tb && !fb) transferEconomics.warehouseToBranchCost += cost;
+      if (fb && tw && !tb) transferEconomics.branchToWarehouseCost += cost;
+    }
+
+    const transferHistory = transfersRaw.map((t) => {
+      const fromWh = t.fromWarehouse?.name ? `${t.fromWarehouse.name} (warehouse)` : null;
+      const fromBr = t.fromBranch?.name ? `${t.fromBranch.name} (branch)` : null;
+      const fromLabel = fromWh || fromBr || "—";
+      const toWh = t.toWarehouse?.name ? `${t.toWarehouse.name} (warehouse)` : null;
+      const toBr = t.toBranch?.name ? `${t.toBranch.name} (branch)` : null;
+      const toLabel = toWh || toBr || "—";
+
+      let routeHint = "Transfer";
+      if (t.fromWarehouseId && t.toWarehouseId && !t.fromBranchId && !t.toBranchId) {
+        routeHint = "Warehouse → Warehouse";
+      } else if (t.fromWarehouseId && t.toBranchId && !t.fromBranchId) {
+        routeHint = "Warehouse → Branch";
+      } else if (t.fromBranchId && t.toWarehouseId && !t.toBranchId) {
+        routeHint = "Branch → Warehouse";
+      }
+
+      return {
+        id: t.id,
+        createdAt: t.createdAt,
+        productName: t.product?.name ?? "—",
+        quantity: t.quantity,
+        unitCostRecorded: t.costPrice,
+        totalCostRecorded:
+          typeof t.totalValue === "number" ? t.totalValue : t.quantity * (t.costPrice || 0),
+        fromLabel,
+        toLabel,
+        routeHint,
+        transferredByName: t.transferredBy?.fullName ?? "—",
+        note: t.note || null,
+      };
+    });
+
+    res.json({
+      dateFiltered: !!(startDate || endDate),
+      startDate: startDate || null,
+      endDate: endDate || null,
+      summaries,
+      rollup: {
+        warehousesListed: summaries.length,
+        distinctSkusHedged: rollupSkus,
+        totalPieces: rollupPieces,
+        totalCostValue: rollupCost,
+        rollupHint: null,
+      },
+      productLinesDetailWarehouseId,
+      /** @deprecated */
+      productLinesDetailForBranchId: productLinesDetailWarehouseId,
+      productLines,
+      transferEconomics,
+      transferHistory,
+    });
+  } catch (err) {
+    console.error("[GET /reports/warehouse]", err);
+    res.status(500).json({ error: "Could not generate warehouse report" });
   }
 });
 

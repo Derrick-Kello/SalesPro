@@ -8,6 +8,21 @@ const { invalidate } = require("../cache");
 const { resolveBranchId } = require("../utils/branchScope");
 const paystack = require("../lib/paystack");
 
+const FULL_PAY_TOL = 0.009;
+
+function roundMoney(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+}
+
+/** Augment API JSON with paid/balance (amountPaid = cumulative toward invoice). */
+function augmentSaleJson(sale) {
+  if (!sale) return sale;
+  const paid = sale.payment ? roundMoney(sale.payment.amountPaid) : 0;
+  const gt = roundMoney(sale.grandTotal);
+  const balanceDue = Math.max(0, roundMoney(gt - paid));
+  return { ...sale, paidToDate: paid, balanceDue };
+}
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -43,7 +58,7 @@ router.get("/", async (req, res) => {
       },
       orderBy: { createdAt: "desc" },
     });
-    res.json(sales);
+    res.json(sales.map(augmentSaleJson));
   } catch (err) {
     console.error("[GET /sales]", err.message);
     res.status(500).json({ error: "Could not fetch sales" });
@@ -64,16 +79,79 @@ router.get("/:id", async (req, res) => {
       },
     });
     if (!sale) return res.status(404).json({ error: "Sale not found" });
-    res.json(sale);
+    res.json(augmentSaleJson(sale));
   } catch (err) {
     console.error("[GET /sales/:id]", err.message);
     res.status(500).json({ error: "Could not fetch sale" });
   }
 });
 
+// Additional payment toward a partial balance (admin only — e.g. record customer payoff)
+router.patch("/:id/payment", authorize("ADMIN"), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const additional = parseFloat(req.body.additionalAmountPaid);
+  if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid sale id" });
+  if (Number.isNaN(additional) || additional <= 0) {
+    return res.status(400).json({ error: "additionalAmountPaid must be a positive number" });
+  }
+
+  try {
+    const sale = await prisma.sale.findUnique({
+      where: { id },
+      include: { payment: true },
+    });
+    if (!sale || !sale.payment) return res.status(404).json({ error: "Sale or payment not found" });
+    if (sale.status !== "PARTIALLY_PAID") {
+      return res.status(400).json({ error: "Additional payments apply only to partially paid sales with a remaining balance" });
+    }
+
+    const gt = roundMoney(sale.grandTotal);
+    let newPaid = roundMoney(sale.payment.amountPaid + additional);
+    if (newPaid > gt + FULL_PAY_TOL) newPaid = gt;
+    const bal = Math.max(0, roundMoney(gt - newPaid));
+    const newStatus = bal <= FULL_PAY_TOL ? "COMPLETED" : "PARTIALLY_PAID";
+
+    await prisma.$transaction([
+      prisma.payment.update({
+        where: { saleId: id },
+        data: { amountPaid: newPaid, change: 0 },
+      }),
+      prisma.sale.update({ where: { id }, data: { status: newStatus } }),
+    ]);
+
+    const updated = await prisma.sale.findUnique({
+      where: { id },
+      include: {
+        saleItems: { include: { product: { select: { id: true, name: true, price: true, category: true, barcode: true } } } },
+        user: { select: { fullName: true, username: true } },
+        customer: true,
+        branch: { select: { name: true } },
+        payment: true,
+      },
+    });
+    res.json(augmentSaleJson(updated));
+    invalidate("overview-stats");
+  } catch (err) {
+    console.error("[PATCH /sales/:id/payment]", err.message);
+    res.status(500).json({ error: "Could not update payment" });
+  }
+});
+
 // Process a new sale
 router.post("/", async (req, res) => {
-  const { customerId, items, discount, tax, shipping, paymentMethod, amountPaid, paymentReference, currency: saleCurrency } = req.body;
+  const {
+    customerId,
+    items,
+    discount,
+    tax,
+    shipping,
+    paymentMethod,
+    amountPaid: amountPaidRaw,
+    paymentReference,
+    currency: saleCurrency,
+    partialPayment,
+    cashTendered: cashTenderedRaw,
+  } = req.body;
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: "Cart is empty" });
@@ -91,13 +169,17 @@ router.post("/", async (req, res) => {
     return res.status(400).json({ error: "Branch is required. Admins must choose a branch (navbar) before checkout." });
   }
 
+  const partial = Boolean(partialPayment);
+  if (partial && paymentMethod === "PAYSTACK") {
+    return res.status(400).json({ error: "Paystack does not support partial payment at checkout. Choose full payment or another method." });
+  }
+
   try {
     const productIds = items.map((i) => i.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
     });
 
-    // Check branch inventory first, fall back to global inventory
     const branchInventories = await prisma.branchInventory.findMany({
       where: { branchId, productId: { in: productIds } },
     });
@@ -144,8 +226,41 @@ router.post("/", async (req, res) => {
     const discountAmount = parseFloat(discount) || 0;
     const taxAmount = parseFloat(tax) || 0;
     const shippingAmount = parseFloat(shipping) || 0;
-    const grandTotal = totalAmount - discountAmount + taxAmount + shippingAmount;
-    const change = (parseFloat(amountPaid) || 0) - grandTotal;
+    const grandTotal = Math.max(0, totalAmount - discountAmount + taxAmount + shippingAmount);
+    const grandTotalVal = roundMoney(grandTotal);
+
+    /** Cumulative credited toward invoice (not physical cash tender unless equal). */
+    let creditedTowardSale = grandTotalVal;
+    let cashChange = 0;
+
+    if (partial) {
+      creditedTowardSale = roundMoney(parseFloat(amountPaidRaw));
+      if (Number.isNaN(creditedTowardSale) || creditedTowardSale <= FULL_PAY_TOL) {
+        return res.status(400).json({ error: "Enter an amount collected now that is greater than zero" });
+      }
+      if (creditedTowardSale > grandTotalVal + FULL_PAY_TOL) {
+        return res.status(400).json({ error: "Collected amount cannot exceed the sale total" });
+      }
+      if (paymentMethod === "CASH") {
+        const tender = parseFloat(cashTenderedRaw !== undefined && cashTenderedRaw !== null && cashTenderedRaw !== ""
+          ? cashTenderedRaw
+          : amountPaidRaw);
+        if (Number.isNaN(tender) || tender < creditedTowardSale - FULL_PAY_TOL) {
+          return res.status(400).json({ error: "Cash received must be at least the amount applied to this sale" });
+        }
+        cashChange = Math.max(0, roundMoney(tender - creditedTowardSale));
+      }
+    } else if (paymentMethod === "CASH") {
+      const tender = parseFloat(amountPaidRaw);
+      if (Number.isNaN(tender) || tender < grandTotalVal - FULL_PAY_TOL) {
+        return res.status(400).json({ error: "Amount tendered must cover the full total" });
+      }
+      creditedTowardSale = grandTotalVal;
+      cashChange = Math.max(0, roundMoney(tender - grandTotalVal));
+    }
+
+    const balanceRemaining = Math.max(0, roundMoney(grandTotalVal - creditedTowardSale));
+    const saleStatus = balanceRemaining <= FULL_PAY_TOL ? "COMPLETED" : "PARTIALLY_PAID";
 
     if (paymentMethod === "PAYSTACK") {
       if (!paymentReference || !String(paymentReference).trim()) {
@@ -156,7 +271,7 @@ router.post("/", async (req, res) => {
       }
       const curr = (saleCurrency || "NGN").toUpperCase();
       try {
-        await paystack.verifyPaymentMatches(paymentReference, grandTotal, curr);
+        await paystack.verifyPaymentMatches(paymentReference, grandTotalVal, curr);
       } catch (e) {
         return res.status(400).json({ error: e.message || "Paystack verification failed" });
       }
@@ -166,6 +281,8 @@ router.post("/", async (req, res) => {
       if (dup) {
         return res.status(400).json({ error: "This Paystack reference was already used for a sale" });
       }
+      creditedTowardSale = grandTotalVal;
+      cashChange = 0;
     }
 
     const sale = await prisma.$transaction(async (tx) => {
@@ -178,8 +295,8 @@ router.post("/", async (req, res) => {
           discount: discountAmount,
           tax: taxAmount,
           shipping: shippingAmount,
-          grandTotal,
-          status: "COMPLETED",
+          grandTotal: grandTotalVal,
+          status: saleStatus,
           saleItems: { create: saleItemsData },
         },
         select: { id: true },
@@ -190,8 +307,8 @@ router.post("/", async (req, res) => {
           data: {
             saleId: newSale.id,
             method: paymentMethod,
-            amountPaid: parseFloat(amountPaid) || grandTotal,
-            change: change > 0 ? change : 0,
+            amountPaid: creditedTowardSale,
+            change: cashChange,
             reference: paymentReference,
           },
         }),
@@ -204,7 +321,7 @@ router.post("/", async (req, res) => {
         ...(customerId ? [
           tx.customer.update({
             where: { id: parseInt(customerId) },
-            data: { loyaltyPoints: { increment: Math.floor(grandTotal) } },
+            data: { loyaltyPoints: { increment: Math.floor(grandTotalVal) } },
           })
         ] : []),
       ]);
@@ -223,11 +340,67 @@ router.post("/", async (req, res) => {
       },
     });
 
-    res.status(201).json(completeSale);
+    res.status(201).json(augmentSaleJson(completeSale));
     invalidate("overview-stats");
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Sale processing failed" });
+  }
+});
+
+// Delete many sales in one request (admin only; same rules as DELETE /:id)
+router.post("/bulk-delete", authorize("ADMIN"), checkPermission("sales.delete"), async (req, res) => {
+  const raw = req.body.ids;
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return res.status(400).json({ error: "Provide a non-empty ids array" });
+  }
+  const ids = [...new Set(raw.map((x) => parseInt(x, 10)))].filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) {
+    return res.status(400).json({ error: "No valid numeric sale ids" });
+  }
+  if (ids.length > 500) {
+    return res.status(400).json({ error: "Too many ids at once (max 500)" });
+  }
+
+  try {
+    const sales = await prisma.sale.findMany({
+      where: { id: { in: ids } },
+      include: { saleItems: true },
+    });
+    const found = new Set(sales.map((s) => s.id));
+    const missing = ids.filter((id) => !found.has(id));
+    if (missing.length > 0) {
+      return res.status(404).json({
+        error: `Sale(s) not found: ${missing.slice(0, 20).join(", ")}${missing.length > 20 ? " …" : ""}`,
+      });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const sale of sales) {
+        const id = sale.id;
+        if ((sale.status === "COMPLETED" || sale.status === "PARTIALLY_PAID") && sale.branchId) {
+          await Promise.all(
+            sale.saleItems.map((item) =>
+              tx.branchInventory
+                .update({
+                  where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
+                  data: { quantity: { increment: item.quantity } },
+                })
+                .catch(() => {})
+            )
+          );
+        }
+        await tx.payment.deleteMany({ where: { saleId: id } });
+        await tx.saleItem.deleteMany({ where: { saleId: id } });
+        await tx.sale.delete({ where: { id } });
+      }
+    }, { timeout: 120000 });
+
+    res.json({ deleted: ids.length, message: `${ids.length} sale(s) deleted` });
+    invalidate("overview-stats");
+  } catch (err) {
+    console.error("[POST /sales/bulk-delete]", err.message);
+    res.status(500).json({ error: "Could not delete sales" });
   }
 });
 
@@ -242,8 +415,8 @@ router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), checkPermission("sales.
     });
 
     if (!sale) return res.status(404).json({ error: "Sale not found" });
-    if (sale.status !== "COMPLETED") {
-      return res.status(400).json({ error: "Only completed sales can be cancelled" });
+    if (sale.status !== "COMPLETED" && sale.status !== "PARTIALLY_PAID") {
+      return res.status(400).json({ error: "Only active sales (completed or partially paid) can be cancelled" });
     }
 
     await prisma.$transaction(async (tx) => {
@@ -278,7 +451,7 @@ router.delete("/:id", authorize("ADMIN"), checkPermission("sales.delete"), async
     if (!sale) return res.status(404).json({ error: "Sale not found" });
 
     await prisma.$transaction(async (tx) => {
-      if (sale.status === "COMPLETED" && sale.branchId) {
+      if ((sale.status === "COMPLETED" || sale.status === "PARTIALLY_PAID") && sale.branchId) {
         await Promise.all(
           sale.saleItems.map(item =>
             tx.branchInventory.update({
