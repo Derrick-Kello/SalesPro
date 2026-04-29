@@ -13,6 +13,25 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 
+function downloadCsv(filename, csvText) {
+  const bom = '\uFEFF'
+  const blob = new Blob([bom + csvText], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
+function normalizeSpreadsheetRow(row) {
+  const n = {}
+  Object.entries(row || {}).forEach(([k, v]) => {
+    const key = String(k).trim().toLowerCase().replace(/\s+/g, '_')
+    n[key] = v
+  })
+  return n
+}
+
 function generateUPCA() {
   const digits = Array.from({ length: 11 }, () => Math.floor(Math.random() * 10))
   const oddSum = digits[0] + digits[2] + digits[4] + digits[6] + digits[8] + digits[10]
@@ -131,6 +150,16 @@ export default function Products({ mode = 'all' }) {
     XLSX.writeFile(wb, 'products.xlsx')
   }
 
+  function downloadImportTemplate() {
+    downloadCsv(
+      'product-import-template.csv',
+      [
+        'name,category,cost_price,selling_price,barcode,stock,low_stock_alert,supplier,description',
+        'Sample item,Groceries,2.50,4.99,,0,10,Supplier Name,Optional notes',
+      ].join('\n') + '\n'
+    )
+  }
+
   // ── Import CSV/Excel ──
   function handleImport(e) {
     const file = e.target.files[0]
@@ -144,19 +173,31 @@ export default function Products({ mode = 'all' }) {
         const rows = XLSX.utils.sheet_to_json(ws)
         let imported = 0, skipped = 0
         for (const row of rows) {
-          const name = row.Name || row.name
-          const category = row.Category || row.category
-          const price = parseFloat(row.SellingPrice || row.Price || row.price)
-          const costPrice = parseFloat(row.CostPrice || row.costPrice || 0)
-          if (!name || !category || isNaN(price) || isNaN(costPrice)) { skipped++; continue }
+          const r = normalizeSpreadsheetRow(row)
+          const name = r.name
+          const category = r.category
+          const price = parseFloat(
+            r.selling_price ?? r.sellingprice ?? r.price ?? r.sell_price ?? ''
+          )
+          const costPrice = parseFloat(r.cost_price ?? r.costprice ?? r.cost ?? '')
+          if (!name || !category || Number.isNaN(price) || Number.isNaN(costPrice)) {
+            skipped++
+            continue
+          }
+          const bcRaw = r.barcode ?? r.upc ?? r.ean
+          const barcode =
+            bcRaw != null && String(bcRaw).trim() !== '' ? String(bcRaw).trim() : undefined
           try {
             await api.post('/products', {
-              name, category, price, costPrice,
-              barcode: row.Barcode || row.barcode || undefined,
-              description: row.Description || row.description || '',
-              quantity: parseInt(row.Stock || row.stock) || 0,
-              lowStockAlert: parseInt(row.LowStockAlert || row.lowStockAlert) || 10,
-              supplier: row.Supplier || row.supplier || '',
+              name,
+              category,
+              price,
+              costPrice,
+              barcode,
+              description: r.description ?? r.desc ?? '',
+              quantity: parseInt(r.stock ?? r.quantity ?? r.qty ?? 0, 10) || 0,
+              lowStockAlert: parseInt(r.low_stock_alert ?? r.lowstockalert ?? 10, 10) || 10,
+              supplier: r.supplier ?? r.vendor ?? '',
             })
             imported++
           } catch { skipped++ }
@@ -191,6 +232,14 @@ export default function Products({ mode = 'all' }) {
           </button>
           {canEdit && (
             <>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={downloadImportTemplate}
+                style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+              >
+                <FileDown size={14} strokeWidth={2} /> CSV template
+              </button>
               <button className="btn btn-outline" onClick={() => fileRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                 <FileUp size={14} strokeWidth={2} /> Import
               </button>
