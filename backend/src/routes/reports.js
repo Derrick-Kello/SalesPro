@@ -39,8 +39,8 @@ function prismaExpenseDateClause(startDate, endDate) {
   return { date };
 }
 
-/** COGS from completed sales; date filters match GET /sales semantics. */
-async function queryProfitLossCogs(startDate, endDate, branchId) {
+/** `sales s` predicates for Profit & Loss (completed sales; same boundaries as GET /sales). */
+function profitLossCompletedSalePredicates(startDate, endDate, branchId) {
   const predicates = [`s.status = 'COMPLETED'`];
   const binds = [];
   let p = 1;
@@ -61,6 +61,12 @@ async function queryProfitLossCogs(startDate, endDate, branchId) {
     binds.push(parseInt(branchId, 10));
     p++;
   }
+  return { predicates, binds };
+}
+
+/** COGS from completed sales; date filters match GET /sales semantics. */
+async function queryProfitLossCogs(startDate, endDate, branchId) {
+  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
   const sql = `
         SELECT COALESCE(SUM(si.quantity * p."costPrice"), 0)::float AS "cogs"
         FROM sale_items si
@@ -69,6 +75,46 @@ async function queryProfitLossCogs(startDate, endDate, branchId) {
         WHERE ${predicates.join(" AND ")}
       `;
   return prisma.$queryRawUnsafe(sql, ...binds);
+}
+
+/** Sum discount + shipping straight from `sales` (matches list UI / avoids Prisma _sum quirks on Float). */
+async function queryProfitLossDiscountShippingTotals(startDate, endDate, branchId) {
+  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
+  const rows = await prisma.$queryRawUnsafe(
+    `
+    SELECT COALESCE(SUM(s.discount), 0)::float AS "discount",
+           COALESCE(SUM(s.shipping), 0)::float AS "shipping"
+    FROM sales s
+    WHERE ${predicates.join(" AND ")}
+    `,
+    ...binds
+  );
+  const row = rows[0];
+  return {
+    discount: Number(row?.discount ?? 0),
+    shipping: Number(row?.shipping ?? 0),
+  };
+}
+
+async function queryProfitLossDiscountShippingByBranch(startDate, endDate, branchId) {
+  const { predicates, binds } = profitLossCompletedSalePredicates(startDate, endDate, branchId);
+  const rows = await prisma.$queryRawUnsafe(
+    `
+    SELECT s."branchId" AS "branchId",
+           COALESCE(SUM(s.discount), 0)::float AS "totalDiscount",
+           COALESCE(SUM(s.shipping), 0)::float AS "totalShipping"
+    FROM sales s
+    WHERE ${predicates.join(" AND ")}
+    GROUP BY s."branchId"
+    ORDER BY s."branchId" NULLS LAST
+    `,
+    ...binds
+  );
+  return rows.map((r) => ({
+    branchId: r.branchId,
+    totalDiscount: Number(r.totalDiscount ?? 0),
+    totalShipping: Number(r.totalShipping ?? 0),
+  }));
 }
 
 function cached(key, fn) {
@@ -209,7 +255,8 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
 
     const [
       salesCompleted,
-      discountShippingTotalsAgg,
+      discountShippingTotals,
+      discountShippingByBranchRaw,
       salesRefunded,
       paymentsAgg,
       expensesAgg,
@@ -222,10 +269,8 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
         _sum: { grandTotal: true },
         _count: { id: true },
       }),
-      prisma.sale.aggregate({
-        where: saleWhereCompleted,
-        _sum: { discount: true, shipping: true },
-      }),
+      queryProfitLossDiscountShippingTotals(startDate, endDate, branchId),
+      queryProfitLossDiscountShippingByBranch(startDate, endDate, branchId),
       prisma.sale.aggregate({
         where: saleWhereRefunded,
         _sum: { grandTotal: true },
@@ -281,16 +326,10 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
     const cogs = cogsRow[0]?.cogs ?? 0;
     const grossProfit = netRevenue - cogs;
     const netProfit = grossProfit - totalExpenses;
-    const totalDiscountApplied = discountShippingTotalsAgg._sum.discount ?? 0;
-    const totalShippingCharges = discountShippingTotalsAgg._sum.shipping ?? 0;
+    const totalDiscountApplied = discountShippingTotals.discount;
+    const totalShippingCharges = discountShippingTotals.shipping;
 
-    const discountShippingByBranchRows = await prisma.sale.groupBy({
-      by: ["branchId"],
-      where: saleWhereCompleted,
-      _sum: { discount: true, shipping: true },
-    });
-
-    const branchIdsWithSales = discountShippingByBranchRows.map((r) => r.branchId).filter((id) => id != null);
+    const branchIdsWithSales = discountShippingByBranchRaw.map((r) => r.branchId).filter((id) => id != null);
     const branchRecords = branchIdsWithSales.length
       ? await prisma.branch.findMany({
           where: { id: { in: branchIdsWithSales } },
@@ -299,12 +338,12 @@ router.get("/profit-loss", authenticate, authorize("ADMIN", "MANAGER"), async (r
       : [];
     const branchNameById = Object.fromEntries(branchRecords.map((b) => [b.id, b.name]));
 
-    const discountShippingByBranch = discountShippingByBranchRows
+    const discountShippingByBranch = discountShippingByBranchRaw
       .map((r) => ({
         branchId: r.branchId,
         branchName: r.branchId == null ? "No branch" : (branchNameById[r.branchId] || "Unknown branch"),
-        totalDiscount: r._sum.discount ?? 0,
-        totalShipping: r._sum.shipping ?? 0,
+        totalDiscount: r.totalDiscount,
+        totalShipping: r.totalShipping,
       }))
       .sort((a, b) => a.branchName.localeCompare(b.branchName));
 
