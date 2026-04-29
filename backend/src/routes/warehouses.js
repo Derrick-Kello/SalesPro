@@ -73,7 +73,7 @@ router.get("/:id/inventory", authorize("ADMIN", "MANAGER"), async (req, res) => 
     const rows = await prisma.warehouseInventory.findMany({
       where: { warehouseId: wh.id },
       include: {
-        product: { select: { id: true, name: true, category: true, costPrice: true, price: true } },
+        product: { select: { id: true, name: true, variant: true, category: true, costPrice: true, price: true } },
       },
       orderBy: { productId: "asc" },
     });

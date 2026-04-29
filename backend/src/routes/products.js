@@ -19,6 +19,7 @@ router.get("/", async (req, res) => {
       conditions.push({
         OR: [
           { name: { contains: search, mode: "insensitive" } },
+          { variant: { contains: search, mode: "insensitive" } },
           { barcode: { contains: search, mode: "insensitive" } },
           { category: { contains: search, mode: "insensitive" } },
         ],
@@ -49,7 +50,7 @@ router.get("/", async (req, res) => {
             }
           : {}),
       },
-      orderBy: { name: "asc" },
+      orderBy: [{ name: "asc" }, { variant: "asc" }],
     });
     res.json(products);
   } catch (err) {
@@ -90,16 +91,31 @@ router.get("/:id", async (req, res) => {
 
 // Add a new product - only managers and admins
 router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create"), async (req, res) => {
-  const { name, category, price, costPrice, barcode, description, quantity, lowStockAlert, supplier, branchIds } = req.body;
+  const {
+    name,
+    variant,
+    category,
+    price,
+    costPrice,
+    barcode,
+    description,
+    quantity,
+    lowStockAlert,
+    supplier,
+    branchIds,
+  } = req.body;
 
   if (!name || !category || !price || costPrice === undefined || costPrice === "" || costPrice === null) {
     return res.status(400).json({ error: "Name, category, selling price, and cost price are required" });
   }
 
+  const variantTrim = (variant ?? "Standard").toString().trim() || "Standard";
+
   try {
     const product = await prisma.product.create({
       data: {
         name,
+        variant: variantTrim,
         category,
         price: parseFloat(price),
         costPrice: parseFloat(costPrice),
@@ -121,7 +137,16 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create
     res.status(201).json(product);
   } catch (err) {
     if (err.code === "P2002") {
-      return res.status(409).json({ error: "A product with that barcode already exists" });
+      const tgt = err.meta?.target;
+      const isBarcode = Array.isArray(tgt)
+        ? tgt.includes("barcode") || tgt.some((x) => String(x).includes("barcode"))
+        : typeof tgt === "string" &&
+          tgt.includes("barcode");
+      return res.status(409).json({
+        error: isBarcode
+          ? "A product with that barcode already exists"
+          : "Another product already uses this name + variant.",
+      });
     }
     res.status(500).json({ error: "Could not create product" });
   }
@@ -129,16 +154,19 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create
 
 // Update product details
 router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.edit"), async (req, res) => {
-  const { name, category, price, costPrice, barcode, description, branchIds } = req.body;
+  const { name, variant, category, price, costPrice, barcode, description, branchIds } = req.body;
   const id = parseInt(req.params.id);
 
   if (!name || !category || !price || costPrice === undefined || costPrice === "" || costPrice === null) {
     return res.status(400).json({ error: "Name, category, selling price, and cost price are required" });
   }
 
+  const variantTrim = (variant ?? "Standard").toString().trim() || "Standard";
+
   try {
     const data = {
       name,
+      variant: variantTrim,
       category,
       price: parseFloat(price),
       costPrice: parseFloat(costPrice),
@@ -156,6 +184,17 @@ router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.edit
     });
     res.json(product);
   } catch (err) {
+    if (err.code === "P2002") {
+      const tgt = err.meta?.target;
+      const isBarcode = Array.isArray(tgt)
+        ? tgt.includes("barcode") || tgt.some((x) => String(x).includes("barcode"))
+        : typeof tgt === "string" && tgt.includes("barcode");
+      return res.status(409).json({
+        error: isBarcode
+          ? "A product with that barcode already exists"
+          : "Another product already uses this name + variant.",
+      });
+    }
     res.status(500).json({ error: "Could not update product" });
   }
 });

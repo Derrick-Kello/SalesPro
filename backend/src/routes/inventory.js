@@ -14,7 +14,7 @@ router.get("/", async (req, res) => {
     const inventory = await prisma.branchInventory.findMany({
       where,
       include: { product: true, branch: { select: { name: true } } },
-      orderBy: { product: { name: "asc" } },
+      orderBy: [{ product: { name: "asc" } }, { product: { variant: "asc" } }],
     });
 
     const result = inventory.map(i => ({ ...i, isLowStock: i.quantity <= i.lowStockAlert }));

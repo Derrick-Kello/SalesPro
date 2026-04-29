@@ -142,7 +142,7 @@ router.post("/", checkPermission("transfers.create"), async (req, res) => {
             note,
           },
           include: {
-            product: { select: { name: true, costPrice: true, price: true } },
+            product: { select: { name: true, variant: true, costPrice: true, price: true } },
             fromBranch: { select: { name: true } },
             toBranch: { select: { name: true } },
             fromWarehouse: { select: { name: true } },
@@ -168,7 +168,7 @@ router.get("/", async (req, res) => {
   try {
     const transfers = await prisma.stockTransfer.findMany({
       include: {
-        product: { select: { name: true, costPrice: true, price: true } },
+        product: { select: { name: true, variant: true, costPrice: true, price: true } },
         fromBranch: { select: { name: true } },
         toBranch: { select: { name: true } },
         fromWarehouse: { select: { name: true } },

@@ -156,6 +156,7 @@ model User {
 model Product {
   id          Int      @id @default(autoincrement())
   name        String
+  variant     String   @default("Standard")
   category    String
   price       Float
   costPrice   Float     @default(0)
@@ -173,6 +174,7 @@ model Product {
   stockTransfers     StockTransfer[]
   branches           Branch[]           @relation("ProductBranches")
 
+  @@unique([name, variant])
   @@map("products")
 }
 
