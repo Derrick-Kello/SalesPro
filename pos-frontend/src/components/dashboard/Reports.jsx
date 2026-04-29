@@ -143,6 +143,11 @@ function ReportBody({ type, data, fmt }) {
             Tip: create expense categories named <strong>Inventory Purchases</strong> and <strong>Purchase Returns</strong> under Expenses → Expense Categories to track those lines on this report.
           </p>
         )}
+        {data.dateFiltered === false && (
+          <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16, maxWidth: 640 }}>
+            All periods: totals include every completed sale (same scope as Sales History when no start/end date is chosen).
+          </p>
+        )}
         <div className="stats-grid">
           <div className="stat-card"><div className="stat-label">Sales (completed)</div><div className="stat-value" style={{ color: 'var(--success)' }}>{fmt(data.salesMade)}</div></div>
           <div className="stat-card"><div className="stat-label">Sales returns</div><div className="stat-value">{fmt(data.salesReturns)}</div></div>
@@ -169,8 +174,12 @@ function ReportBody({ type, data, fmt }) {
             </h3>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14 }}>
               {data.branchId == null
-                ? 'Totals from completed sales in the selected date range, grouped by outlet. Footer matches the figures above.'
-                : 'Totals for the selected outlet in the selected date range.'}
+                ? (data.dateFiltered === false
+                  ? 'Totals from all completed sales, grouped by outlet. Footer matches the figures above.'
+                  : 'Totals from completed sales in the selected date range, grouped by outlet. Footer matches the figures above.')
+                : (data.dateFiltered === false
+                  ? 'Totals for the selected outlet across all periods.'
+                  : 'Totals for the selected outlet in the selected date range.')}
             </p>
             <div className="table-container" style={{ boxShadow: 'none' }}>
               <table className="data-table">
