@@ -1,10 +1,24 @@
 // Central API helper - all requests go through here.
 // Change VITE_API_URL in .env to point to a different backend.
 
-const BASE = import.meta.env.VITE_API_URL || '/api'
+export const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 function getToken() {
   return localStorage.getItem('token')
+}
+
+function parseJsonBody(text, status) {
+  const t = (text || '').trim()
+  if (!t) return {}
+  try {
+    return JSON.parse(t)
+  } catch {
+    throw new Error(
+      status === 404
+        ? 'API not found — is the backend running and VITE_API_URL correct?'
+        : `Server returned non-JSON (${status}). Check the Network tab for this request.`
+    )
+  }
 }
 
 async function request(method, path, body, _retries = 0) {
@@ -14,7 +28,7 @@ async function request(method, path, body, _retries = 0) {
 
   let res
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
@@ -27,14 +41,16 @@ async function request(method, path, body, _retries = 0) {
     throw networkErr
   }
 
+  const text = await res.text()
+
+  // Must not return undefined: callers do setState(await api.get()) and would crash on .map
   if (res.status === 401 && path !== '/auth/login') {
     localStorage.clear()
-    window.location.href = '/login'
-    return
+    window.location.assign('/login')
+    throw new Error('Session expired')
   }
 
-  const text = await res.text()
-  const data = text ? JSON.parse(text) : {}
+  const data = parseJsonBody(text, res.status)
 
   if (!res.ok) {
     if (res.status >= 500 && method === 'GET' && _retries < 2) {

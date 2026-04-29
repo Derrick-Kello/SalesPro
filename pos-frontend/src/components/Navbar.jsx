@@ -8,8 +8,11 @@ import { LogOut, ShoppingBag, GitBranch, Coins } from 'lucide-react'
 
 const ROLE_LABELS = { ADMIN: 'Administrator', MANAGER: 'Manager', CASHIER: 'Cashier' }
 
-function getInitials(fullName = '') {
-  return fullName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) || '?'
+function getInitials(fullName) {
+  // Default params only apply to `undefined`, not `null` — null would crash on .split
+  const s = fullName == null ? '' : String(fullName).trim()
+  if (!s) return '?'
+  return s.split(/\s+/).map((n) => n[0]).join('').toUpperCase().slice(0, 2) || '?'
 }
 
 export default function Navbar({ extra }) {

@@ -5,14 +5,19 @@ import { useBranch } from '../../context/BranchContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import Modal from '../Modal'
 import BarcodeDisplay from '../BarcodeDisplay'
-import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle } from 'lucide-react'
+import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle, Wallet } from 'lucide-react'
+import QRCode from 'react-qr-code'
 
 const STORE_NAME = 'SalesPro'
+
+/** Must match backend `paystack.SUPPORTED` for a sane cashier experience */
+const PAYSTACK_CURRENCIES = new Set(['NGN', 'GHS', 'ZAR', 'USD', 'KES', 'XOF', 'EUR', 'GBP'])
 
 const PAY_METHODS = [
   { key: 'CASH',         label: 'Cash',         icon: Banknote },
   { key: 'MOBILE_MONEY', label: 'Mobile Money',  icon: Smartphone },
   { key: 'CARD',         label: 'Card',          icon: CreditCard },
+  { key: 'PAYSTACK',     label: 'Paystack',      icon: Wallet },
 ]
 
 export default function Register() {
@@ -45,14 +50,20 @@ export default function Register() {
   const [newCust, setNewCust]           = useState({ name: '', phone: '', email: '' })
   const [barcodePreview, setBarcodePreview] = useState(null)
   const [processing, setProcessing]     = useState(false)
+  const [paystackEnabled, setPaystackEnabled] = useState(false)
+  /** After initialize: customer scans QR → pays on phone; we poll until success */
+  const [paystackQrSession, setPaystackQrSession] = useState(null)
   const scanTimerRef = useRef(null)
   const lastKeyTime  = useRef(0)
   const submittingRef = useRef(false) // hard guard against double-submit
 
+  const catalog = Array.isArray(allProducts) ? allProducts : []
+
   const loadProducts = useCallback(async () => {
     try {
       const params = branchId ? `?branchId=${branchId}` : ''
-      setAllProducts(await api.get(`/products${params}`))
+      const raw = await api.get(`/products${params}`)
+      setAllProducts(Array.isArray(raw) ? raw : [])
     } catch (err) { console.error(err.message) }
   }, [branchId])
 
@@ -65,28 +76,110 @@ export default function Register() {
   }
 
   const loadCustomers = useCallback(async () => {
-    try { setCustomers(await api.get('/customers')) } catch (err) { console.error(err.message) }
+    try {
+      const raw = await api.get('/customers')
+      setCustomers(Array.isArray(raw) ? raw : [])
+    } catch (err) { console.error(err.message) }
+  }, [])
+
+  const clearCart = useCallback(() => {
+    setCart([])
+    setDiscount(0)
+    setTaxInput(0)
+    setShippingInput(0)
+    setCustomerId('')
   }, [])
 
   useEffect(() => { loadProducts(); loadCustomers() }, [loadProducts, loadCustomers])
 
   useEffect(() => {
-    let filtered = allProducts
+    api.get('/payments/paystack/status')
+      .then((r) => setPaystackEnabled(Boolean(r.enabled)))
+      .catch(() => setPaystackEnabled(false))
+  }, [])
+
+  const showPaystack = paystackEnabled && PAYSTACK_CURRENCIES.has(currency.code)
+  const payMethodChoices = PAY_METHODS.filter((m) => m.key !== 'PAYSTACK' || showPaystack)
+  const selectedCustomer = customers.find((c) => String(c.id) === String(customerId))
+  const selectedCustomerHasEmail = Boolean(selectedCustomer?.email?.trim())
+
+  useEffect(() => {
+    if (payMethod === 'PAYSTACK' && !showPaystack) setPayMethod('CASH')
+  }, [payMethod, showPaystack])
+
+  useEffect(() => {
+    if (!paystackQrSession) return
+    const session = paystackQrSession
+    let cancelled = false
+    let iv
+
+    async function pollOnce() {
+      if (cancelled || submittingRef.current) return
+      try {
+        const q = new URLSearchParams({
+          reference: session.reference,
+          amount: String(session.grandTotal),
+          currency: session.currencyCode,
+        })
+        const { paid } = await api.get(`/payments/paystack/poll?${q}`)
+        if (!paid || cancelled) return
+        clearInterval(iv)
+        if (submittingRef.current) return
+        submittingRef.current = true
+        try {
+          const sale = await api.post('/sales', {
+            customerId: session.customerId,
+            items: session.items,
+            discount: session.discount,
+            tax: session.tax,
+            shipping: session.shipping,
+            paymentMethod: 'PAYSTACK',
+            amountPaid: session.grandTotal,
+            paymentReference: session.reference,
+            currency: session.currencyCode,
+            ...(session.branchId ? { branchId: session.branchId } : {}),
+          })
+          if (cancelled) return
+          setCheckoutError('')
+          setLastSale(sale)
+          setPaystackQrSession(null)
+          setCheckoutOpen(false)
+          setReceiptOpen(true)
+          clearCart()
+          loadProducts()
+        } catch (err) {
+          if (!cancelled) setCheckoutError(err.message)
+        } finally {
+          submittingRef.current = false
+        }
+      } catch (_) { /* network / poll error — retry */ }
+    }
+
+    pollOnce()
+    iv = setInterval(pollOnce, 2500)
+    return () => {
+      cancelled = true
+      clearInterval(iv)
+    }
+  }, [paystackQrSession, clearCart, loadProducts])
+
+  useEffect(() => {
+    let filtered = catalog
     if (category !== 'all') filtered = filtered.filter(p => p.category === category)
     if (search) filtered = filtered.filter(p =>
       p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.barcode && p.barcode.includes(search))
     )
     setProducts(filtered)
-  }, [category, search, allProducts])
+  }, [category, search, catalog])
 
-  const categories = ['all', ...[...new Set(allProducts.map(p => p.category))].sort()]
+  const categories = ['all', ...[...new Set(catalog.map(p => p.category))].sort()]
 
   async function handleBarcodeEnter(e) {
     if (e.key !== 'Enter' || !search.trim()) return
     try {
       const raw = await api.get('/products/barcode/' + encodeURIComponent(search.trim()))
-      const product = allProducts.find(p => p.id === raw.id) || raw
+      const product = catalog.find(p => p.id === raw.id) || raw
       addToCart(product)
       setSearch('')
     } catch (_) {}
@@ -112,7 +205,7 @@ export default function Register() {
         if (!val.trim()) return
         try {
           const raw = await api.get('/products/barcode/' + encodeURIComponent(val.trim()))
-          const product = allProducts.find(p => p.id === raw.id) || raw
+          const product = catalog.find(p => p.id === raw.id) || raw
           addToCart(product)
           setSearch('')
         } catch (_) {}
@@ -156,8 +249,6 @@ export default function Register() {
 
   function removeItem(productId) { setCart(prev => prev.filter(i => i.productId !== productId)) }
 
-  function clearCart() { setCart([]); setDiscount(0); setTaxInput(0); setShippingInput(0); setCustomerId('') }
-
   const subtotal   = cart.reduce((s, i) => s + i.subtotal, 0)
   const tax        = Number(taxInput) || 0
   const shippingAmt = Number(shippingInput) || 0
@@ -167,6 +258,7 @@ export default function Register() {
   function openCheckout() {
     if (!cart.length) { alert('Cart is empty'); return }
     setPayMethod('CASH'); setAmountPaid(''); setPayRef(''); setCheckoutError('')
+    setPaystackQrSession(null)
     setCheckoutOpen(true)
   }
 
@@ -191,6 +283,7 @@ export default function Register() {
         paymentMethod: payMethod,
         amountPaid: payMethod === 'CASH' ? Number(amountPaid) : grandTotal,
         paymentReference: payRef || null,
+        currency: currency.code,
         ...(user?.role === 'ADMIN' && branchId ? { branchId } : {}),
       })
       setLastSale(sale)
@@ -204,6 +297,47 @@ export default function Register() {
       setProcessing(false)
       submittingRef.current = false
     }
+  }
+
+  async function startPaystackCheckout() {
+    if (submittingRef.current) return
+    submittingRef.current = true
+    setProcessing(true)
+    setCheckoutError('')
+    try {
+      const init = await api.post('/payments/paystack/initialize', {
+        amount: grandTotal,
+        email: selectedCustomer?.email || undefined,
+        currency: currency.code,
+      })
+      const url = init.authorizationUrl
+      if (!url) {
+        setCheckoutError('Paystack did not return a checkout link')
+        return
+      }
+      setPaystackQrSession({
+        authorizationUrl: url,
+        reference: init.reference,
+        grandTotal,
+        currencyCode: currency.code,
+        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        discount: Number(discount),
+        tax,
+        shipping: shippingAmt,
+        customerId: customerId || null,
+        branchId: user?.role === 'ADMIN' && branchId ? branchId : undefined,
+      })
+    } catch (err) {
+      setCheckoutError(err.message)
+    } finally {
+      setProcessing(false)
+      submittingRef.current = false
+    }
+  }
+
+  function confirmCheckout() {
+    if (payMethod === 'PAYSTACK') startPaystackCheckout()
+    else processPayment()
   }
 
   async function registerCustomer() {
@@ -456,25 +590,69 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
       {/* ── Checkout Modal ── */}
       {checkoutOpen && (
         <Modal
-          title="Complete Payment"
-          onClose={() => setCheckoutOpen(false)}
+          title={paystackQrSession ? 'Scan to pay' : 'Complete Payment'}
+          onClose={() => { setPaystackQrSession(null); setCheckoutOpen(false) }}
           footer={
-            <>
-              <button className="btn btn-outline" onClick={() => setCheckoutOpen(false)} disabled={processing}>Cancel</button>
+            paystackQrSession ? (
               <button
-                className="btn btn-success"
-                onClick={processPayment}
-                disabled={processing}
-                style={{ fontWeight: 700, minWidth: 160, display: 'flex', alignItems: 'center', gap: 7 }}
+                className="btn btn-outline"
+                onClick={() => setPaystackQrSession(null)}
               >
-                {processing
-                  ? <><span className="spin" style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%' }} /> Processing…</>
-                  : 'Confirm Payment'
-                }
+                Back
               </button>
-            </>
+            ) : (
+              <>
+                <button className="btn btn-outline" onClick={() => setCheckoutOpen(false)} disabled={processing}>Cancel</button>
+                <button
+                  className="btn btn-success"
+                  onClick={confirmCheckout}
+                  disabled={processing}
+                  style={{ fontWeight: 700, minWidth: 160, display: 'flex', alignItems: 'center', gap: 7 }}
+                >
+                  {processing
+                    ? <><span className="spin" style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%' }} /> Processing…</>
+                    : payMethod === 'PAYSTACK' ? 'Show Paystack QR' : 'Confirm Payment'
+                  }
+                </button>
+              </>
+            )
           }
         >
+          {paystackQrSession ? (
+            <div style={{ textAlign: 'center' }}>
+              <p className="payment-summary" style={{ marginBottom: 12 }}>
+                Total <strong>{fmt(paystackQrSession.grandTotal)}</strong>
+                <span style={{ display: 'block', fontSize: 12, color: 'var(--text-muted)', marginTop: 6, fontWeight: 400 }}>
+                  Ask the customer to scan with their phone camera. They complete payment in the browser; this screen updates automatically.
+                </span>
+              </p>
+              <div
+                style={{
+                  display: 'inline-block',
+                  padding: 16,
+                  background: '#fff',
+                  borderRadius: 12,
+                  boxShadow: '0 1px 8px rgba(0,0,0,0.08)',
+                }}
+              >
+                <QRCode
+                  value={paystackQrSession.authorizationUrl}
+                  size={220}
+                  style={{ height: 'auto', maxWidth: '100%', width: '100%' }}
+                  viewBox="0 0 256 256"
+                />
+              </div>
+              <p style={{ marginTop: 14, fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                Ref: {paystackQrSession.reference}
+              </p>
+              <p style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+                <span className="spin" style={{ display: 'inline-block', width: 12, height: 12, border: '2px solid var(--border2)', borderTopColor: 'var(--primary)', borderRadius: '50%', verticalAlign: 'middle', marginRight: 8 }} />
+                Waiting for payment…
+              </p>
+              {checkoutError && <div className="error-message" style={{ marginTop: 16, textAlign: 'left' }}>{checkoutError}</div>}
+            </div>
+          ) : (
+            <>
           <div className="payment-summary">
             Total Amount: <strong>{fmt(grandTotal)}</strong>
           </div>
@@ -482,7 +660,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
           <div className="form-group" style={{ marginTop: 16 }}>
             <label>Payment Method</label>
             <div className="payment-methods">
-              {PAY_METHODS.map(({ key, label, icon: Icon }) => (
+              {payMethodChoices.map(({ key, label, icon: Icon }) => (
                 <button
                   key={key}
                   className={'payment-btn' + (payMethod === key ? ' active' : '')}
@@ -524,7 +702,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             </div>
           )}
 
-          {payMethod !== 'CASH' && (
+          {payMethod !== 'CASH' && payMethod !== 'PAYSTACK' && (
             <div className="form-group">
               <label>Reference / Transaction ID</label>
               <input
@@ -535,7 +713,18 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             </div>
           )}
 
+          {payMethod === 'PAYSTACK' && (
+            <p style={{ marginTop: 12, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+              Shows a QR code the customer scans to open Paystack on their phone (card, bank, USSD, mobile money where available).
+              {!selectedCustomerHasEmail && (
+                <span> Add a customer with an email for best results, or a placeholder email is used.</span>
+              )}
+            </p>
+          )}
+
           {checkoutError && <div className="error-message">{checkoutError}</div>}
+            </>
+          )}
         </Modal>
       )}
 

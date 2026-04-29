@@ -1,3 +1,4 @@
+import React from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -7,6 +8,36 @@ import { AuthProvider } from './context/AuthContext'
 import { BranchProvider } from './context/BranchContext'
 import { CurrencyProvider } from './context/CurrencyContext'
 import { PermissionProvider } from './context/PermissionContext'
+
+class AppErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props)
+    this.state = { err: null }
+  }
+
+  static getDerivedStateFromError(err) {
+    return { err }
+  }
+
+  render() {
+    if (this.state.err) {
+      return (
+        <div style={{ padding: 24, fontFamily: 'system-ui', maxWidth: 560, margin: '10vh auto' }}>
+          <h1 style={{ fontSize: 18, marginBottom: 8 }}>Something went wrong</h1>
+          <p style={{ color: '#555', marginBottom: 12 }}>{String(this.state.err.message || this.state.err)}</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{ padding: '8px 14px', cursor: 'pointer' }}
+          >
+            Reload page
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 function ProtectedRoute({ children }) {
   const { token } = useAuth()
@@ -37,16 +68,18 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <CurrencyProvider>
-        <PermissionProvider>
-          <BranchProvider>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
-          </BranchProvider>
-        </PermissionProvider>
-      </CurrencyProvider>
-    </AuthProvider>
+    <AppErrorBoundary>
+      <AuthProvider>
+        <CurrencyProvider>
+          <PermissionProvider>
+            <BranchProvider>
+              <BrowserRouter>
+                <AppRoutes />
+              </BrowserRouter>
+            </BranchProvider>
+          </PermissionProvider>
+        </CurrencyProvider>
+      </AuthProvider>
+    </AppErrorBoundary>
   )
 }

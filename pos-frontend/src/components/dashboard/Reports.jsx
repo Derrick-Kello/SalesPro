@@ -135,6 +135,7 @@ function ReportBody({ type, data, fmt }) {
   }
 
   if (type === 'profit-loss') {
+    const rows = data.discountShippingByBranch || []
     return (
       <>
         {(data.purchaseCategoryMissing || data.purchaseReturnCategoryMissing) && (
@@ -146,6 +147,8 @@ function ReportBody({ type, data, fmt }) {
           <div className="stat-card"><div className="stat-label">Sales (completed)</div><div className="stat-value" style={{ color: 'var(--success)' }}>{fmt(data.salesMade)}</div></div>
           <div className="stat-card"><div className="stat-label">Sales returns</div><div className="stat-value">{fmt(data.salesReturns)}</div></div>
           <div className="stat-card"><div className="stat-label">Net revenue</div><div className="stat-value" style={{ fontWeight: 800 }}>{fmt(data.netRevenue)}</div></div>
+          <div className="stat-card"><div className="stat-label">Total discounts (on sales)</div><div className="stat-value" style={{ color: 'var(--warning)' }}>{fmt(data.totalDiscountApplied ?? 0)}</div></div>
+          <div className="stat-card"><div className="stat-label">Total shipping (charged)</div><div className="stat-value">{fmt(data.totalShippingCharges ?? 0)}</div></div>
           <div className="stat-card"><div className="stat-label">Inventory purchases</div><div className="stat-value">{fmt(data.inventoryPurchases)}</div></div>
           <div className="stat-card"><div className="stat-label">Purchase returns</div><div className="stat-value">{fmt(data.purchaseReturns)}</div></div>
           <div className="stat-card"><div className="stat-label">Total expenses</div><div className="stat-value" style={{ color: 'var(--danger)' }}>{fmt(data.totalExpenses)}</div></div>
@@ -158,6 +161,46 @@ function ReportBody({ type, data, fmt }) {
           <div className="stat-card"><div className="stat-label">Completed sales #</div><div className="stat-value">{data.completedTransactionCount ?? 0}</div></div>
           <div className="stat-card"><div className="stat-label">Refunded sales #</div><div className="stat-value">{data.refundedTransactionCount ?? 0}</div></div>
         </div>
+
+        {rows.length > 0 && (
+          <div className="card" style={{ marginTop: 24, padding: 20 }}>
+            <h3 style={{ marginBottom: 12, fontSize: 15, fontWeight: 700 }}>
+              Discounts &amp; shipping {data.branchId == null ? 'by branch' : 'for branch'}
+            </h3>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14 }}>
+              {data.branchId == null
+                ? 'Totals from completed sales in the selected date range, grouped by outlet. Footer matches the figures above.'
+                : 'Totals for the selected outlet in the selected date range.'}
+            </p>
+            <div className="table-container" style={{ boxShadow: 'none' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Branch</th>
+                    <th style={{ textAlign: 'right' }}>Discounts applied</th>
+                    <th style={{ textAlign: 'right' }}>Shipping charged</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.branchId ?? 'none'}>
+                      <td style={{ fontWeight: 600 }}>{r.branchName}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(r.totalDiscount)}</td>
+                      <td style={{ textAlign: 'right' }}>{fmt(r.totalShipping)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)', background: 'var(--surface2)' }}>
+                    <td>Total ({data.branchId == null ? 'all branches' : 'this branch'})</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(data.totalDiscountApplied ?? 0)}</td>
+                    <td style={{ textAlign: 'right' }}>{fmt(data.totalShippingCharges ?? 0)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
       </>
     )
   }
