@@ -44,6 +44,9 @@ export default function Register() {
   const [customerOpen, setCustomerOpen] = useState(false)
   const [lastSale, setLastSale]         = useState(null)
   const [payMethod, setPayMethod]       = useState('CASH')
+  const [checkoutMode, setCheckoutMode] = useState('full') // 'full' | 'partial'
+  const [partialAmount, setPartialAmount] = useState('')
+  const [partialCashTender, setPartialCashTender] = useState('')
   const [amountPaid, setAmountPaid]     = useState('')
   const [payRef, setPayRef]             = useState('')
   const [checkoutError, setCheckoutError] = useState('')
@@ -106,6 +109,10 @@ export default function Register() {
   useEffect(() => {
     if (payMethod === 'PAYSTACK' && !showPaystack) setPayMethod('CASH')
   }, [payMethod, showPaystack])
+
+  useEffect(() => {
+    if (payMethod === 'PAYSTACK' && checkoutMode === 'partial') setCheckoutMode('full')
+  }, [payMethod, checkoutMode])
 
   useEffect(() => {
     if (!paystackQrSession) return
@@ -253,11 +260,19 @@ export default function Register() {
   const tax        = Number(taxInput) || 0
   const shippingAmt = Number(shippingInput) || 0
   const grandTotal = Math.max(0, subtotal - Number(discount)) + tax + shippingAmt
-  const change     = Number(amountPaid) - grandTotal
+  const inst = Number(partialAmount) || 0
+  const tenderForPartialCash = partialCashTender === '' ? inst : Number(partialCashTender)
+  const changeFull = Number(amountPaid) - grandTotal
+  const changePartial = checkoutMode === 'partial' && payMethod === 'CASH'
+    ? tenderForPartialCash - inst
+    : 0
 
   function openCheckout() {
     if (!cart.length) { alert('Cart is empty'); return }
     setPayMethod('CASH'); setAmountPaid(''); setPayRef(''); setCheckoutError('')
+    setCheckoutMode('full')
+    setPartialAmount('')
+    setPartialCashTender('')
     setPaystackQrSession(null)
     setCheckoutOpen(true)
   }
@@ -267,13 +282,41 @@ export default function Register() {
     submittingRef.current = true
     setProcessing(true)
     setCheckoutError('')
-    if (payMethod === 'CASH' && Number(amountPaid) < grandTotal) {
-      setCheckoutError('Amount tendered is less than the total')
-      setProcessing(false)
-      submittingRef.current = false
-      return
+    if (checkoutMode === 'full') {
+      if (payMethod === 'CASH' && Number(amountPaid) < grandTotal - 1e-6) {
+        setCheckoutError('Amount tendered is less than the total')
+        setProcessing(false)
+        submittingRef.current = false
+        return
+      }
+    } else {
+      if (grandTotal <= 0.01) {
+        setCheckoutError('Sale total must be greater than zero for partial payment')
+        setProcessing(false)
+        submittingRef.current = false
+        return
+      }
+      if (!(inst > 0) || inst > grandTotal - 1e-6) {
+        setCheckoutError('Enter an amount collected now that is greater than zero and less than the total')
+        setProcessing(false)
+        submittingRef.current = false
+        return
+      }
+      if (payMethod === 'PAYSTACK') {
+        setCheckoutError('Use full payment or another method for checkout')
+        setProcessing(false)
+        submittingRef.current = false
+        return
+      }
+      if (payMethod === 'CASH' && tenderForPartialCash + 1e-6 < inst) {
+        setCheckoutError('Cash received cannot be less than the amount applying to this sale')
+        setProcessing(false)
+        submittingRef.current = false
+        return
+      }
     }
     try {
+      const bodyFull = checkoutMode === 'full'
       const sale = await api.post('/sales', {
         customerId: customerId || null,
         items: cart.map(i => ({ productId: i.productId, quantity: i.quantity })),
@@ -281,7 +324,11 @@ export default function Register() {
         tax,
         shipping: shippingAmt,
         paymentMethod: payMethod,
-        amountPaid: payMethod === 'CASH' ? Number(amountPaid) : grandTotal,
+        partialPayment: !bodyFull,
+        amountPaid: bodyFull ? (payMethod === 'CASH' ? Number(amountPaid) : grandTotal) : inst,
+        cashTendered: (!bodyFull && payMethod === 'CASH')
+          ? (partialCashTender === '' ? inst : tenderForPartialCash)
+          : undefined,
         paymentReference: payRef || null,
         currency: currency.code,
         ...(user?.role === 'ADMIN' && branchId ? { branchId } : {}),
@@ -675,7 +722,57 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             </div>
           </div>
 
-          {payMethod === 'CASH' && (
+          <div className="form-group" style={{ marginTop: 12 }}>
+            <label>Checkout</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 20px', marginTop: 8 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="radio"
+                  name="checkout-mode"
+                  checked={checkoutMode === 'full'}
+                  disabled={processing}
+                  onChange={() => setCheckoutMode('full')}
+                />
+                Full payment
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  type="radio"
+                  name="checkout-mode"
+                  checked={checkoutMode === 'partial'}
+                  disabled={processing || payMethod === 'PAYSTACK'}
+                  onChange={() => setCheckoutMode('partial')}
+                />
+                Partial payment (deposit)
+              </label>
+            </div>
+            {payMethod === 'PAYSTACK' && (
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>Paystack always settles the full invoice amount.</p>
+            )}
+          </div>
+
+          {checkoutMode === 'partial' && (
+            <div className="form-group">
+              <label>Amount collecting now ({currency.symbol}) — applied to this sale</label>
+              <input
+                type="number"
+                step="0.01"
+                min={0.01}
+                max={grandTotal > 0 ? grandTotal : undefined}
+                value={partialAmount}
+                onChange={e => setPartialAmount(e.target.value)}
+                placeholder="0.00"
+                disabled={processing}
+              />
+              {grandTotal > 0 && inst > 0 && inst <= grandTotal && (
+                <p style={{ fontSize: 12, marginTop: 6, color: 'var(--text-muted)' }}>
+                  Will remain due: <strong>{fmt(Math.max(0, grandTotal - inst))}</strong>
+                </p>
+              )}
+            </div>
+          )}
+
+          {payMethod === 'CASH' && checkoutMode === 'full' && (
             <div className="form-group">
               <label>Amount Tendered</label>
               <input
@@ -691,12 +788,38 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                 <div
                   className="change-display"
                   style={{
-                    background: change < 0 ? 'var(--danger-light)' : 'var(--success-light)',
-                    color: change < 0 ? 'var(--danger)' : 'var(--success)',
+                    background: changeFull < 0 ? 'var(--danger-light)' : 'var(--success-light)',
+                    color: changeFull < 0 ? 'var(--danger)' : 'var(--success)',
                     marginTop: 8,
                   }}
                 >
-                  Change: <strong>{fmt(Math.max(0, change))}</strong>
+                  Change: <strong>{fmt(Math.max(0, changeFull))}</strong>
+                </div>
+              )}
+            </div>
+          )}
+
+          {payMethod === 'CASH' && checkoutMode === 'partial' && (
+            <div className="form-group">
+              <label>Cash received from customer (if more than collecting now, change is calculated)</label>
+              <input
+                type="number"
+                step="0.01"
+                value={partialCashTender}
+                onChange={e => setPartialCashTender(e.target.value)}
+                placeholder={String(inst || 'Same as collecting amount')}
+                disabled={processing}
+              />
+              {inst > 0 && tenderForPartialCash + 1e-6 >= inst && (
+                <div
+                  className="change-display"
+                  style={{
+                    background: changePartial >= 0 ? 'var(--success-light)' : 'var(--danger-light)',
+                    color: changePartial >= 0 ? 'var(--success)' : 'var(--danger)',
+                    marginTop: 8,
+                  }}
+                >
+                  Change: <strong>{fmt(Math.max(0, changePartial))}</strong>
                 </div>
               )}
             </div>
@@ -779,9 +902,14 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
               {lastSale.tax > 0 && <div className="receipt-total-row"><span>Tax</span><span>{fmt(lastSale.tax)}</span></div>}
               {lastSale.shipping > 0 && <div className="receipt-total-row"><span>Shipping</span><span>{fmt(lastSale.shipping)}</span></div>}
               <div className="receipt-total-row final"><span>TOTAL</span><span>{fmt(lastSale.grandTotal)}</span></div>
-              <div className="receipt-total-row"><span>Payment</span><span>{lastSale.payment.method.replace('_', ' ')}</span></div>
-              {lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Paid</span><span>{fmt(lastSale.payment.amountPaid)}</span></div>}
-              {lastSale.payment.change > 0 && <div className="receipt-total-row"><span>Change</span><span>{fmt(lastSale.payment.change)}</span></div>}
+              <div className="receipt-total-row"><span>Payment</span><span>{(lastSale.payment?.method ?? '').replace(/_/g, ' ')}</span></div>
+              {lastSale.payment && lastSale.payment.amountPaid > 0 && <div className="receipt-total-row"><span>Paid toward invoice</span><span>{fmt(lastSale.payment.amountPaid)}</span></div>}
+              {lastSale.payment?.change > 0 && <div className="receipt-total-row"><span>Change</span><span>{fmt(lastSale.payment.change)}</span></div>}
+              {lastSale.balanceDue > 0.009 && (
+                <div className="receipt-total-row" style={{ borderTop: '1px dashed var(--border)', paddingTop: 6, marginTop: 6 }}>
+                  <span>Balance remaining</span><span style={{ fontWeight: 800 }}>{fmt(lastSale.balanceDue)}</span>
+                </div>
+              )}
             </div>
             <hr className="receipt-divider" />
             <div className="receipt-footer">

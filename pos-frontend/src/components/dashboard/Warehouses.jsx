@@ -4,18 +4,33 @@ import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
-import { Plus, Pencil, PowerOff } from 'lucide-react'
+import { usePermissions } from '../../context/PermissionContext'
+import { Plus, Pencil, PowerOff, Boxes } from 'lucide-react'
 
 const EMPTY = { name: '', location: '', branchId: '' }
 
 export default function Warehouses() {
-  const [warehouses, setWarehouses]     = useState([])
-  const [branches, setBranches]         = useState([])
-  const [modal, setModal]               = useState(false)
-  const [form, setForm]                 = useState(EMPTY)
-  const [editId, setEditId]             = useState(null)
-  const [tableLoading, setTableLoading] = useState(true)
+  const { can } = usePermissions()
+  const canAdjustInv = can('inventory.adjust')
+
+  const [warehouses, setWarehouses]         = useState([])
+  const [branches, setBranches]             = useState([])
+  const [products, setProducts]             = useState([])
+  const [modal, setModal]                   = useState(false)
+  const [form, setForm]                     = useState(EMPTY)
+  const [editId, setEditId]                 = useState(null)
+  const [tableLoading, setTableLoading]     = useState(true)
+
+  const [stockModal, setStockModal]       = useState(false)
+  const [stockWh, setStockWh]             = useState(null)
+  const [wiRows, setWiRows]               = useState([])
+  const [wiTableLoading, setWiTableLoading] = useState(false)
+  const [addProductId, setAddProductId]   = useState('')
+  const [addQty, setAddQty]               = useState('')
+  const [wiSaveErr, setWiSaveErr]         = useState('')
+
   const [saving, saveError, runSave, setSaveError] = useAsync()
+  const [wiSaving, wiErr, runWi, setWiErr] = useAsync()
 
   async function load(silent) {
     if (!silent) setTableLoading(true)
@@ -26,7 +41,49 @@ export default function Warehouses() {
   }
 
   useEffect(() => { load() }, [])
+  useEffect(() => { api.get('/products').then(setProducts).catch(() => {}) }, [])
   useTabRefresh('warehouses', () => load(true))
+
+  async function loadWarehouseStock(wId) {
+    setWiTableLoading(true)
+    setWiRows([])
+    try {
+      const rows = await api.get(`/warehouses/${wId}/inventory`)
+      setWiRows(rows)
+    } catch {
+      setWiRows([])
+    } finally {
+      setWiTableLoading(false)
+    }
+  }
+
+  function openStockModal(w) {
+    setWiSaveErr('')
+    setWiErr('')
+    setAddProductId('')
+    setAddQty('')
+    setStockWh(w)
+    setStockModal(true)
+    loadWarehouseStock(w.id)
+  }
+
+  async function receiveIntoWarehouse(e) {
+    e?.preventDefault()
+    if (!stockWh) return
+    if (!addProductId || !addQty || parseInt(addQty, 10) <= 0) {
+      setWiSaveErr('Choose a product and a positive quantity')
+      return
+    }
+    setWiSaveErr('')
+    await runWi(async () => {
+      await api.put(`/warehouses/${stockWh.id}/inventory/restock`, {
+        productId: parseInt(addProductId, 10),
+        addQuantity: parseInt(addQty, 10),
+      })
+      setAddQty('')
+      await loadWarehouseStock(stockWh.id)
+    }).catch(() => {})
+  }
 
   function openAdd() { setForm(EMPTY); setEditId(null); setSaveError(''); setModal(true) }
   function openEdit(w) {
@@ -70,6 +127,16 @@ export default function Warehouses() {
                 <td><span className={`badge ${w.isActive ? 'badge-success' : 'badge-danger'}`}>{w.isActive ? 'Active' : 'Inactive'}</span></td>
                 <td>
                   <div className="action-group">
+                    {canAdjustInv && w.isActive && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        title="Warehouse stock — receive goods here before transferring to outlets"
+                        onClick={() => openStockModal(w)}
+                      >
+                        <Boxes size={13} strokeWidth={2} />
+                      </button>
+                    )}
                     <button className="icon-btn primary" title="Edit" onClick={() => openEdit(w)}><Pencil size={13} strokeWidth={2} /></button>
                     {w.isActive && <button className="icon-btn danger" title="Deactivate" onClick={() => deactivate(w.id)}><PowerOff size={13} strokeWidth={2} /></button>}
                   </div>
@@ -79,6 +146,60 @@ export default function Warehouses() {
           </tbody>
         </table>
       </div>
+
+      {stockModal && stockWh && (
+        <Modal title={`Warehouse stock — ${stockWh.name}`} onClose={() => { setStockModal(false); setStockWh(null) }}
+          footer={
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => { setStockModal(false); setStockWh(null) }} disabled={wiSaving}>Close</button>
+              <SaveBtn loading={wiSaving} onClick={receiveIntoWarehouse}>Receive stock</SaveBtn>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
+            Goods logged here belong to this warehouse ledger only.
+            Outlet (branch) quantities move only via <strong>Stock Transfers</strong>.
+          </p>
+          <form onSubmit={receiveIntoWarehouse} className="form-row" style={{ marginBottom: 16 }}>
+            <div className="form-group" style={{ flex: 2 }}>
+              <label>Product</label>
+              <select value={addProductId} onChange={e => setAddProductId(e.target.value)}>
+                <option value="">Select product</option>
+                {products.filter(p => p.isActive).map(p => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group" style={{ flex: 1 }}>
+              <label>Quantity to receive</label>
+              <input type="number" min={1} value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="Qty" />
+            </div>
+          </form>
+          {(wiSaveErr || wiErr) && <div className="error-message">{wiSaveErr || wiErr}</div>}
+          <div className="table-container" style={{ maxHeight: 360, overflowY: 'auto' }}>
+            <table className="data-table">
+              <thead><tr><th>Product</th><th style={{ textAlign: 'right' }}>Qty</th><th>Status</th></tr></thead>
+              <tbody>
+                {wiTableLoading && <LoadingRow cols={3} />}
+                {!wiTableLoading && wiRows.filter(r => r.quantity > 0).length === 0 && (
+                  <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0' }}>No quantities yet — receive stock above.</td></tr>
+                )}
+                {!wiTableLoading && wiRows.filter(r => r.quantity > 0).map(r => (
+                  <tr key={r.id}>
+                    <td style={{ fontWeight: 600 }}>{r.product?.name ?? '—'}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 700 }}>{r.quantity}</td>
+                    <td>
+                      <span className={`badge ${r.isLowStock ? 'badge-warning' : 'badge-success'}`}>
+                        {r.isLowStock ? 'Low' : 'OK'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
+      )}
 
       {modal && (
         <Modal title={editId ? 'Edit Warehouse' : 'Add Warehouse'} onClose={() => setModal(false)}

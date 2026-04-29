@@ -110,6 +110,9 @@ export default function Transfers() {
     if (form.fromType === 'branch' && form.toType === 'branch' && form.fromBranchId === form.toBranchId) {
       setSaveError('Source and destination branches must be different'); return
     }
+    if (form.fromType === 'warehouse' && form.toType === 'warehouse' && form.fromWarehouseId === form.toWarehouseId) {
+      setSaveError('Choose two different warehouses'); return
+    }
 
     await runSave(async () => {
       await api.post('/transfers', {

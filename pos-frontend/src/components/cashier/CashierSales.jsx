@@ -15,6 +15,8 @@ export default function CashierSales() {
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate]     = useState('')
   const [loading, setLoading]     = useState(false)
+  const [selectedIds, setSelectedIds] = useState([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [receiptSale, setReceiptSale] = useState(null)
   const [receiptOpen, setReceiptOpen] = useState(false)
 
@@ -27,6 +29,7 @@ export default function CashierSales() {
       if (endDate)   params.append('endDate', endDate)
       const data = await api.get(`/sales${params.toString() ? '?' + params : ''}`)
       setSales(data)
+      setSelectedIds([])
     } catch (err) {
       console.error(err.message)
     } finally {
@@ -75,12 +78,51 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
 
   async function deleteSale(id) {
     if (!confirm('Permanently delete this sale? This cannot be undone.')) return
-    try { await api.delete(`/sales/${id}`); load(view) } catch (err) { alert(err.message) }
+    try {
+      await api.delete(`/sales/${id}`)
+      setSelectedIds((prev) => prev.filter((x) => x !== id))
+      load(view)
+    } catch (err) { alert(err.message) }
   }
+
+  async function deleteSelectedSales() {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    if (!confirm(`Permanently delete ${ids.length} sale(s)? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    try {
+      await api.post('/sales/bulk-delete', { ids })
+      setSelectedIds([])
+      load(view)
+    } catch (err) {
+      alert(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  function toggleSaleSelected(id, checked) {
+    setSelectedIds((prev) => {
+      if (checked) return prev.includes(id) ? prev : [...prev, id]
+      return prev.filter((x) => x !== id)
+    })
+  }
+
+  function toggleSelectAllVisible(checked) {
+    if (!checked) {
+      setSelectedIds([])
+      return
+    }
+    setSelectedIds(sales.map((s) => s.id))
+  }
+
+  const canBulkDelete = can('sales.delete') && selectedIds.length > 0 && !loading && !bulkDeleting
+  const allVisibleSelected = sales.length > 0 && sales.every((s) => selectedIds.includes(s.id))
 
   const statusClass = s =>
     s === 'COMPLETED' ? 'badge-success' :
-    s === 'CANCELLED' ? 'badge-danger'  : 'badge-warning'
+    s === 'PARTIALLY_PAID' ? 'badge-warning' :
+    s === 'CANCELLED' ? 'badge-danger' : 'badge-warning'
 
   return (
     <div style={{ padding: '20px 24px' }}>
@@ -95,6 +137,25 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
         </div>
       </div>
 
+      {can('sales.delete') && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+          <button
+            type="button"
+            className="btn btn-danger btn-sm"
+            disabled={!canBulkDelete}
+            onClick={deleteSelectedSales}
+          >
+            {bulkDeleting ? 'Deleting…' : `Delete selected (${selectedIds.length})`}
+          </button>
+          {selectedIds.length > 0 && (
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => setSelectedIds([])} disabled={bulkDeleting}>
+              Clear selection
+            </button>
+          )}
+          <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>Select rows, then bulk delete.</span>
+        </div>
+      )}
+
       <div className="history-sub-tabs">
         <button className={`history-sub-tab${view === 'all'  ? ' active' : ''}`} onClick={() => setView('all')}>All Sales</button>
         <button className={`history-sub-tab${view === 'mine' ? ' active' : ''}`} onClick={() => setView('mine')}>My Sales</button>
@@ -104,6 +165,17 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
         <table className="data-table">
           <thead>
             <tr>
+              {can('sales.delete') && (
+                <th style={{ width: 36, textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    title="Select all"
+                    checked={allVisibleSelected}
+                    disabled={loading || sales.length === 0 || bulkDeleting}
+                    onChange={(e) => toggleSelectAllVisible(e.target.checked)}
+                  />
+                </th>
+              )}
               <th>Sale #</th>
               <th>Date</th>
               <th>Cashier</th>
@@ -121,13 +193,24 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
+              <tr><td colSpan={can('sales.delete') ? 14 : 13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
             )}
             {!loading && sales.length === 0 && (
-              <tr><td colSpan={13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
+              <tr><td colSpan={can('sales.delete') ? 14 : 13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
             )}
             {!loading && sales.map(s => (
               <tr key={s.id}>
+                {can('sales.delete') && (
+                  <td style={{ textAlign: 'center' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(s.id)}
+                      disabled={bulkDeleting}
+                      onChange={(e) => toggleSaleSelected(s.id, e.target.checked)}
+                      aria-label={`Select sale ${s.id}`}
+                    />
+                  </td>
+                )}
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
                 <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td>{s.user.fullName}</td>

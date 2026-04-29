@@ -16,6 +16,8 @@ import AllExpenses     from '../components/dashboard/AllExpenses'
 import ExpenseCategories from '../components/dashboard/ExpenseCategories'
 import Branches        from '../components/dashboard/Branches'
 import Warehouses      from '../components/dashboard/Warehouses'
+import PurchaseReceive from '../components/dashboard/PurchaseReceive'
+import PurchaseHistory from '../components/dashboard/PurchaseHistory'
 import CreateTransfer  from '../components/dashboard/CreateTransfer'
 import Transfers       from '../components/dashboard/Transfers'
 import Settings from '../components/dashboard/Settings'
@@ -24,7 +26,7 @@ import {
   Receipt, BarChart3, UserCog, Menu, ChevronDown, ChevronRight,
   Truck, DollarSign, PlusCircle, Tag, FileText, TrendingUp,
   AlertTriangle, Warehouse, List, Printer, GitBranch, ArrowRightLeft,
-  ShoppingCart, Settings as SettingsIcon,
+  ShoppingCart, Settings as SettingsIcon, ClipboardList, History, PackagePlus,
 } from 'lucide-react'
 
 const SIDEBAR = [
@@ -49,6 +51,13 @@ const SIDEBAR = [
   },
   { key: 'branches',   label: 'Branches',   icon: GitBranch, perm: 'branches.view' },
   { key: 'warehouses', label: 'Warehouses', icon: Warehouse, perm: 'warehouses.view' },
+  {
+    label: 'Purchase', icon: ClipboardList, perm: 'inventory.view',
+    children: [
+      { key: 'purchase-receive', label: 'Receive to warehouse', icon: PackagePlus, perm: 'inventory.adjust' },
+      { key: 'purchase-history', label: 'Receipt history', icon: History },
+    ],
+  },
   {
     label: 'Expenses', icon: DollarSign, perm: 'expenses.view',
     children: [
@@ -85,7 +94,7 @@ const REPORT_MAP = {
   'report-profit-loss': 'profit-loss',
   'report-stock':       'stock-alerts',
   'report-users':       'user-report',
-  'report-warehouse':   'stock-alerts',
+  'report-warehouse':   'warehouse-report',
 }
 
 // Maps tab keys to their component. Products has multiple modes sharing the same
@@ -106,6 +115,8 @@ const TAB_COMPONENTS = {
   'expenses-categories': () => <ExpenseCategories />,
   'branches':            () => <Branches />,
   'warehouses':          () => <Warehouses />,
+  'purchase-receive':    () => <PurchaseReceive />,
+  'purchase-history':    () => <PurchaseHistory />,
   'transfers':           () => <Transfers />,
   'create-transfer':     () => <CreateTransfer />,
   'settings':            () => <Settings />,
@@ -131,7 +142,7 @@ export default function Dashboard() {
   const { can } = usePermissions()
   const [active, setActive] = useState('overview')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [expanded, setExpanded] = useState({ Products: true, Sales: true, People: false, Reports: false, Expenses: false })
+  const [expanded, setExpanded] = useState({ Products: true, Purchase: false, Sales: true, People: false, Reports: false, Expenses: false })
   const [visited, setVisited] = useState(() => new Set(['overview']))
 
   function toggleGroup(label) {
