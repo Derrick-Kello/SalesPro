@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/* Default theme variables. Each branch overrides these via inline styles
+ * applied in <BrandedShell> so the entire UI (buttons, cards, navbar) reskins
+ * without rebuilding any classes. */
+:root {
+	--color-primary: #111111;
+	--color-primary-foreground: #ffffff;
+	--color-secondary: #f5f5f4;
+	--color-accent: #d97706;
+	--color-background: #ffffff;
+	--color-foreground: #0c0a09;
+	--color-muted: #737373;
+	--color-border: #e7e5e4;
+	--radius: 0.75rem;
+	--font-heading: var(--font-display, Georgia, serif);
+	--font-body: var(--font-body, system-ui, sans-serif);
+}
+
+@theme inline {
+	--color-brand: var(--color-primary);
+	--color-brand-foreground: var(--color-primary-foreground);
+	--color-brand-secondary: var(--color-secondary);
+	--color-brand-accent: var(--color-accent);
+	--color-brand-bg: var(--color-background);
+	--color-brand-fg: var(--color-foreground);
+	--color-brand-muted: var(--color-muted);
+	--color-brand-border: var(--color-border);
+	--font-sans: var(--font-body);
+	--font-serif: var(--font-heading);
+	--radius-brand: var(--radius);
+}
+
+html,
+body {
+	background: var(--color-background);
+	color: var(--color-foreground);
+	font-family: var(--font-body);
+}
+
+h1,
+h2,
+h3,
+.font-display {
+	font-family: var(--font-heading);
+	letter-spacing: -0.01em;
+}
+
+/* Reusable brand utility classes — all driven by the active branch's CSS vars. */
+@utility btn-brand {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.7rem 1.25rem;
+	border-radius: var(--radius);
+	background: var(--color-primary);
+	color: var(--color-primary-foreground);
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	transition: transform 0.15s ease, opacity 0.15s ease, background 0.2s ease;
+	border: 1px solid color-mix(in oklab, var(--color-primary) 80%, black);
+}
+
+@utility btn-brand-soft {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	padding: 0.6rem 1.1rem;
+	border-radius: var(--radius);
+	background: var(--color-secondary);
+	color: var(--color-foreground);
+	font-weight: 500;
+	border: 1px solid var(--color-border);
+	transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+@utility btn-brand-ghost {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.5rem 0.9rem;
+	border-radius: var(--radius);
+	color: var(--color-foreground);
+	font-weight: 500;
+	transition: background 0.2s ease;
+}
+
+@utility card-brand {
+	background: var(--color-background);
+	border: 1px solid var(--color-border);
+	border-radius: var(--radius);
+}
+
+@utility chip-brand {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.2rem 0.65rem;
+	border-radius: 999px;
+	background: var(--color-secondary);
+	color: var(--color-foreground);
+	font-size: 0.72rem;
+	font-weight: 500;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	border: 1px solid var(--color-border);
+}
+
+@utility text-muted-brand {
+	color: var(--color-muted);
+}
+
+/* Base hover/active interactions */
+.btn-brand:hover {
+	background: color-mix(in oklab, var(--color-primary) 90%, white);
+	transform: translateY(-1px);
+}
+.btn-brand:active {
+	transform: translateY(0);
+}
+.btn-brand:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+	transform: none;
+}
+.btn-brand-soft:hover {
+	background: color-mix(in oklab, var(--color-secondary) 80%, var(--color-primary) 10%);
+}
+.btn-brand-ghost:hover {
+	background: var(--color-secondary);
+}
+
+/* Smooth loading shimmer for product skeletons */
+@keyframes shimmer {
+	0% { background-position: -400px 0; }
+	100% { background-position: 400px 0; }
+}
+.skeleton {
+	background: linear-gradient(
+		90deg,
+		var(--color-secondary) 0%,
+		color-mix(in oklab, var(--color-secondary) 70%, white) 50%,
+		var(--color-secondary) 100%
+	);
+	background-size: 800px 100%;
+	animation: shimmer 1.4s infinite linear;
+	border-radius: var(--radius);
+}
