@@ -1,5 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
+const transactionOptions = require("../prisma/transactionOptions");
 const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
@@ -151,7 +152,7 @@ router.post("/", checkPermission("transfers.create"), async (req, res) => {
           },
         });
       },
-      { timeout: 15000 }
+      transactionOptions
     );
 
     res.status(201).json(transfer);
@@ -251,7 +252,7 @@ router.delete("/:id", authorize("ADMIN"), checkPermission("transfers.delete"), a
 
         await tx.stockTransfer.delete({ where: { id: transfer.id } });
       },
-      { timeout: 15000 }
+      transactionOptions
     );
 
     res.json({ message: "Transfer deleted and inventory reversed" });

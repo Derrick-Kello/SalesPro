@@ -6,16 +6,18 @@ import { formatMoney } from "@/lib/money";
 import type { Product } from "@/lib/types";
 import { ProductImage } from "./ProductImage";
 import { useAuth } from "./AuthProvider";
+import { useNotice } from "./NoticeProvider";
 
 export function ProductCard({ product }: { product: Product }) {
 	const router = useRouter();
 	const { isAuthenticated } = useAuth();
+	const { notify } = useNotice();
 	const target = `/products/${product.id}`;
 
 	function handleClick(e: React.MouseEvent<HTMLAnchorElement>) {
 		if (isAuthenticated) return;
 		e.preventDefault();
-		window.alert("Please sign up to view this product.");
+		notify("Please sign up to view this product.", "info");
 		router.push(`/signup?next=${encodeURIComponent(target)}`);
 	}
 

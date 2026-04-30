@@ -8,6 +8,7 @@ import { CartProvider } from "@/components/CartProvider";
 import { BrandedShell } from "@/components/BrandedShell";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
+import { NoticeProvider } from "@/components/NoticeProvider";
 import { getActiveBranch } from "@/lib/serverBranch";
 
 const sans = Geist({
@@ -41,13 +42,15 @@ export default async function RootLayout({
 			<body className={`${sans.variable} ${display.variable} antialiased`}>
 				<BranchProvider value={{ slug, profile, record, isResolved: Boolean(record) }}>
 					<AuthProvider>
-						<CartProvider>
-							<BrandedShell theme={profile.theme}>
-								<Navbar />
-								<main className="flex-1">{children}</main>
-								<Footer />
-							</BrandedShell>
-						</CartProvider>
+						<NoticeProvider>
+							<CartProvider>
+								<BrandedShell theme={profile.theme}>
+									<Navbar />
+									<main className="flex-1">{children}</main>
+									<Footer />
+								</BrandedShell>
+							</CartProvider>
+						</NoticeProvider>
 					</AuthProvider>
 				</BranchProvider>
 			</body>

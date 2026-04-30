@@ -62,7 +62,7 @@ router.post("/", checkPermission("customers.create"), async (req, res) => {
 
   try {
     const customer = await prisma.customer.create({
-      data: { name, phone, email, address },
+      data: { name, phone, email, address, createdById: req.user.id },
     });
     res.status(201).json(customer);
   } catch (err) {

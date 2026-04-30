@@ -6,6 +6,7 @@ import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { SaveBtn } from '../LoadingRow'
 import { PackagePlus, FileUp } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { productDisplayName } from '../../utils/productDisplay'
 
 function sheetRowsToBulkLines(rows) {
   const out = []
@@ -46,6 +47,7 @@ export default function PurchaseReceive() {
   const [quantity, setQuantity] = useState('')
   const [supplier, setSupplier] = useState('')
   const [note, setNote] = useState('')
+  const [newVariantRows, setNewVariantRows] = useState([])
   const [lastSuccess, setLastSuccess] = useState(null)
   const [loading, setLoading] = useState(true)
   const [saving, saveErr, runSave, setSaveErr] = useAsync()
@@ -62,7 +64,11 @@ export default function PurchaseReceive() {
   }, [products])
 
   const selected = productMap[productId] || null
-  const previewQty = parseInt(quantity, 10) || 0
+  const subVariantQtyTotal = newVariantRows.reduce(
+    (sum, r) => sum + (parseInt(r.quantity, 10) || 0),
+    0
+  )
+  const previewQty = newVariantRows.length ? subVariantQtyTotal : parseInt(quantity, 10) || 0
   const previewLine =
     selected && previewQty > 0 ? previewQty * (selected.costPrice || 0) : 0
 
@@ -89,8 +95,8 @@ export default function PurchaseReceive() {
     e.preventDefault()
     setSaveErr('')
     setLastSuccess(null)
-    if (!warehouseId || !productId || !quantity || parseInt(quantity, 10) <= 0) {
-      setSaveErr('Warehouse, product, and quantity are required')
+    if (!warehouseId || !productId) {
+      setSaveErr('Warehouse and product are required')
       return
     }
     const sup = supplier.trim()
@@ -99,27 +105,93 @@ export default function PurchaseReceive() {
       return
     }
     await runSave(async () => {
-      const res = await api.post('/purchase/warehouse-receipts', {
-        warehouseId: parseInt(warehouseId, 10),
-        productId: parseInt(productId, 10),
-        quantity: parseInt(quantity, 10),
-        supplier: sup,
-        note: note.trim() ? note.trim() : null,
+      const wh = parseInt(warehouseId, 10)
+      const pid = parseInt(productId, 10)
+      const hasSubVariants = newVariantRows.length > 0
+      const baseQty = parseInt(quantity, 10)
+      if (!hasSubVariants && (!Number.isFinite(baseQty) || baseQty <= 0)) {
+        throw new Error('Quantity must be a positive number')
+      }
+      const lines = []
+
+      if (hasSubVariants) {
+        const rows = newVariantRows
+          .map((r) => ({
+            label: String(r.name || '').trim(),
+            qty: parseInt(r.quantity, 10),
+          }))
+          .filter((r) => r.label && Number.isFinite(r.qty) && r.qty > 0)
+
+        if (!rows.length) {
+          throw new Error('Enter at least one valid sub-variant row with a positive quantity')
+        }
+
+        // Create concrete products for each purchase-time sub-variant:
+        // e.g. 31-Loafer(Black), 35-Loafer(Blue)
+        const createdNames = new Set()
+        for (const row of rows) {
+          const variantName = `${row.label}-${selected?.name || `Product ${pid}`}`
+          const key = variantName.toLowerCase()
+          if (createdNames.has(key)) continue
+          createdNames.add(key)
+
+          const created = await api.post('/products', {
+            name: variantName,
+            category: selected?.category || 'General',
+            price: selected?.price ?? 0,
+            costPrice: selected?.costPrice ?? 0,
+            barcode: null,
+            description: selected?.description || '',
+            quantity: 0,
+            lowStockAlert: selected?.inventory?.lowStockAlert ?? 10,
+            supplier: sup,
+            branchIds: Array.isArray(selected?.branches)
+              ? selected.branches.map((b) => b.id).filter(Boolean)
+              : undefined,
+            tags: [],
+          })
+
+          lines.push({
+            productId: created.id,
+            quantity: row.qty,
+            supplier: sup,
+            note: note.trim() ? note.trim() : undefined,
+          })
+        }
+      } else {
+        lines.push({
+          productId: pid,
+          quantity: baseQty,
+          supplier: sup,
+          note: note.trim() ? note.trim() : undefined,
+        })
+      }
+      const res = await api.post('/purchase/warehouse-receipts/bulk', {
+        warehouseId: wh,
+        lines,
       })
-      setLastSuccess(res)
+      const qtyAdded = lines.reduce((s, l) => s + l.quantity, 0)
+      setLastSuccess({
+        bulk: true,
+        qtyAdded,
+        createdCount: res.createdCount,
+        failedCount: res.failedCount,
+      })
       setQuantity('')
       setNote('')
+      setNewVariantRows([])
+      await load()
     })
   }
 
   function linePreviewLabel(L) {
     if (L.productId) {
       const p = productMap[L.productId]
-      return p ? `#${L.productId} · ${p.name}` : `Product #${L.productId}`
+      return p ? `#${L.productId} · ${productDisplayName(p)}` : `Product #${L.productId}`
     }
     if (L.barcode) {
       const p = products.find((x) => x.barcode === L.barcode)
-      return p ? `#${p.id} · ${p.name} (${L.barcode})` : `Barcode ${L.barcode}`
+      return p ? `#${p.id} · ${productDisplayName(p)} (${L.barcode})` : `Barcode ${L.barcode}`
     }
     return '—'
   }
@@ -268,14 +340,72 @@ export default function PurchaseReceive() {
               </div>
               <div className="form-group">
                 <label>Product *</label>
-                <select value={productId} onChange={(e) => setProductId(e.target.value)} required>
+                <select
+                  value={productId}
+                  onChange={(e) => {
+                    setProductId(e.target.value)
+                    setQuantity('')
+                    setNewVariantRows([])
+                  }}
+                  required
+                >
                   <option value="">Select product</option>
                   {products.filter((p) => p.isActive).map((p) => (
                     <option key={p.id} value={p.id}>
-                      #{p.id} · {p.name}
+                      #{p.id} · {productDisplayName(p)}
                     </option>
                   ))}
                 </select>
+              </div>
+              <div className="form-group">
+                <label>
+                  Add sub-variants for this purchase{' '}
+                  <span style={{ fontWeight: 400, fontSize: 12, color: 'var(--text-muted)' }}>
+                    (creates new products like 31-{selected?.name || 'Product'})
+                  </span>
+                </label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {newVariantRows.map((row, idx) => (
+                    <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 120px auto', gap: 8 }}>
+                      <input
+                        value={row.name}
+                        onChange={(e) =>
+                          setNewVariantRows((prev) =>
+                            prev.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r))
+                          )}
+                        placeholder="Sub-variant label (e.g. 31)"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={row.quantity}
+                        onChange={(e) =>
+                          setNewVariantRows((prev) =>
+                            prev.map((r, i) => (i === idx ? { ...r, quantity: e.target.value } : r))
+                          )}
+                        placeholder="Qty"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={() =>
+                          setNewVariantRows((prev) => prev.filter((_, i) => i !== idx))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ marginTop: 8 }}
+                  onClick={() => setNewVariantRows((prev) => [...prev, { name: '', quantity: '' }])}
+                  disabled={!productId}
+                >
+                  Add sub-variant row
+                </button>
               </div>
               <div className="form-row">
                 <div className="form-group">
@@ -285,9 +415,15 @@ export default function PurchaseReceive() {
                     min={1}
                     value={quantity}
                     onChange={(e) => setQuantity(e.target.value)}
-                    placeholder="Units received"
-                    required
+                    placeholder={newVariantRows.length ? 'Auto from sub-variants' : 'Units received'}
+                    required={newVariantRows.length === 0}
+                    disabled={newVariantRows.length > 0}
                   />
+                  {newVariantRows.length > 0 && (
+                    <small style={{ color: 'var(--text-muted)' }}>
+                      Total from sub-variants: <strong>{subVariantQtyTotal}</strong>
+                    </small>
+                  )}
                 </div>
                 <div className="form-group">
                   <label>Supplier *</label>
@@ -331,7 +467,7 @@ export default function PurchaseReceive() {
                   {saveErr}
                 </div>
               )}
-              {lastSuccess?.receipt && (
+              {lastSuccess && (
                 <div
                   role="status"
                   style={{
@@ -343,8 +479,29 @@ export default function PurchaseReceive() {
                     fontSize: 13,
                   }}
                 >
-                  Saved receipt #{lastSuccess.receipt.id} — added{' '}
-                  <strong>{lastSuccess.receipt.quantity}</strong> to warehouse stock.
+                  {lastSuccess.receipt ? (
+                    <>
+                      Saved receipt #{lastSuccess.receipt.id} — added{' '}
+                      <strong>{lastSuccess.receipt.quantity}</strong> to warehouse stock
+                      {lastSuccess.receipt.tag?.name ? (
+                        <>
+                          {' '}
+                          (tag: <strong>{lastSuccess.receipt.tag.name}</strong>)
+                        </>
+                      ) : (
+                        ''
+                      )}
+                      .
+                    </>
+                  ) : (
+                    <>
+                      Recorded <strong>{lastSuccess.createdCount ?? 0}</strong> variant line(s), total{' '}
+                      <strong>{lastSuccess.qtyAdded ?? 0}</strong> units to warehouse stock.
+                      {(lastSuccess.failedCount ?? 0) > 0 ? (
+                        <> Skipped <strong>{lastSuccess.failedCount}</strong> line(s).</>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               )}
 
@@ -377,9 +534,9 @@ export default function PurchaseReceive() {
           >
             <h3 style={{ margin: '0 0 10px', fontSize: 16, fontWeight: 700 }}>From spreadsheet</h3>
             <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 14, lineHeight: 1.45 }}>
-              Upload a <strong>.csv</strong> or Excel file to load lines here (nothing is saved until you confirm).
+              Upload a <strong>.csv</strong> or Excel file to load lines here (nothing is saved until you confirm).{' '}
               Each row needs <strong>quantity</strong>, <strong>supplier</strong>, and either <strong>product_id</strong> or{' '}
-              <strong>barcode</strong>. Optional <strong>note</strong>. Row 1 is the header. Use the{' '}
+              <strong>barcode</strong>. Optional column: <strong>note</strong>. Row 1 is the header. Use the{' '}
               <strong>warehouse</strong> selected in <em>Single receipt</em> above.
             </p>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>

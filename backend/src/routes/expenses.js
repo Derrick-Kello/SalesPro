@@ -18,7 +18,7 @@ router.post("/categories", authorize("ADMIN", "MANAGER"), checkPermission("expen
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   try {
-    const cat = await prisma.expenseCategory.create({ data: { name } });
+    const cat = await prisma.expenseCategory.create({ data: { name, createdById: req.user.id } });
     res.status(201).json(cat);
   } catch (err) {
     if (err.code === "P2002") return res.status(409).json({ error: "Category already exists" });
@@ -91,6 +91,7 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("expenses.create
         note,
         date: date ? new Date(date) : new Date(),
         branchId,
+        createdById: req.user.id,
       },
       include: {
         category: true,

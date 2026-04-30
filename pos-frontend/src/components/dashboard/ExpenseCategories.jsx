@@ -5,8 +5,10 @@ import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAlert } from '../../context/AlertContext'
 
 export default function ExpenseCategories() {
+  const { showError } = useAlert()
   const [categories, setCategories]     = useState([])
   const [modal, setModal]               = useState(false)
   const [name, setName]                 = useState('')
@@ -35,7 +37,7 @@ export default function ExpenseCategories() {
 
   async function remove(id) {
     if (!confirm('Delete this category? Expenses using it will be affected.')) return
-    try { await api.delete(`/expenses/categories/${id}`); load() } catch (err) { alert(err.message) }
+    try { await api.delete(`/expenses/categories/${id}`); load() } catch (err) { showError(err.message) }
   }
 
   return (

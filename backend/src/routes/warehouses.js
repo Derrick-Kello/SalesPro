@@ -55,7 +55,7 @@ router.post("/", authorize("ADMIN"), checkPermission("warehouses.create"), async
       if (!branch) return res.status(404).json({ error: "Branch not found" });
     }
     const warehouse = await prisma.warehouse.create({
-      data: { name, location: location || null, branchId: branchId ? parseInt(branchId) : null },
+      data: { name, location: location || null, branchId: branchId ? parseInt(branchId) : null, createdById: req.user.id },
       include: { branch: { select: { name: true } } },
     });
     res.status(201).json(warehouse);

@@ -17,7 +17,7 @@ router.post("/", authorize("ADMIN"), checkPermission("branches.create"), async (
   const { name, location, phone } = req.body;
   if (!name) return res.status(400).json({ error: "Branch name is required" });
   try {
-    const branch = await prisma.branch.create({ data: { name, location, phone } });
+    const branch = await prisma.branch.create({ data: { name, location, phone, createdById: req.user.id } });
     res.status(201).json(branch);
   } catch { res.status(500).json({ error: "Could not create branch" }); }
 });

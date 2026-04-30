@@ -3,16 +3,19 @@ import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { usePermissions } from '../../context/PermissionContext'
+import { useAlert } from '../../context/AlertContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { PackagePlus } from 'lucide-react'
+import { productDisplayName } from '../../utils/productDisplay'
 
 export default function Inventory() {
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
   const { can } = usePermissions()
+  const { showError } = useAlert()
   const canEdit = can('inventory.adjust')
   const showBranchCol = user?.role === 'ADMIN' && !selectedBranchId
 
@@ -39,14 +42,14 @@ export default function Inventory() {
   function openModal(item) { setSelected(item); setAddQty(''); setSetQty(''); setSupplier(''); setModal(true) }
 
   async function handleAdd() {
-    if (!addQty || addQty <= 0) { alert('Enter a valid quantity'); return }
+    if (!addQty || addQty <= 0) { showError('Enter a valid quantity'); return }
     const params = selectedBranchId ? `?branchId=${selectedBranchId}` : ''
     await runSave(() => api.put(`/inventory/${selected.productId}/restock${params}`, { addQuantity: parseInt(addQty), supplier }))
     setModal(false); load()
   }
 
   async function handleSet() {
-    if (setQty === '') { alert('Enter a quantity'); return }
+    if (setQty === '') { showError('Enter a quantity'); return }
     const params = selectedBranchId ? `?branchId=${selectedBranchId}` : ''
     await runSave(() => api.put(`/inventory/${selected.productId}/adjust${params}`, { quantity: parseInt(setQty), supplier }))
     setModal(false); load()
@@ -81,7 +84,7 @@ export default function Inventory() {
               const low = i.quantity <= i.lowStockAlert
               return (
                 <tr key={`${i.branchId}-${i.productId}`}>
-                  <td style={{ fontWeight: 600 }}>{i.product.name}</td>
+                  <td style={{ fontWeight: 600 }}>{productDisplayName(i.product)}</td>
                   <td><span className="badge badge-info">{i.product.category}</span></td>
                   {showBranchCol && <td style={{ color: 'var(--text-muted)' }}>{i.branch?.name || '—'}</td>}
                   <td><span style={{ fontWeight: 700, fontSize: 15 }}>{i.quantity}</span></td>
@@ -111,7 +114,7 @@ export default function Inventory() {
               <SaveBtn loading={saving} onClick={handleAdd}>Add Stock</SaveBtn>
             </>
           }>
-          <p className="modal-subtitle">Product: <strong>{selected.product.name}</strong> — Current stock: <strong>{selected.quantity}</strong></p>
+          <p className="modal-subtitle">Product: <strong>{productDisplayName(selected.product)}</strong> — Current stock: <strong>{selected.quantity}</strong></p>
           <div className="form-row">
             <div className="form-group"><label>Add Stock (restock)</label><input type="number" min="1" value={addQty} onChange={e => setAddQty(e.target.value)} placeholder="Qty to add" /></div>
             <div className="form-group"><label>Set Stock (override)</label><input type="number" min="0" value={setQty} onChange={e => setSetQty(e.target.value)} placeholder="Exact qty" /></div>

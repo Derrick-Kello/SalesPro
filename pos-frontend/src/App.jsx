@@ -8,6 +8,7 @@ import { AuthProvider } from './context/AuthContext'
 import { BranchProvider } from './context/BranchContext'
 import { CurrencyProvider } from './context/CurrencyContext'
 import { PermissionProvider } from './context/PermissionContext'
+import { AlertProvider } from './context/AlertContext'
 
 class AppErrorBoundary extends React.Component {
   constructor(props) {
@@ -73,9 +74,11 @@ export default function App() {
         <CurrencyProvider>
           <PermissionProvider>
             <BranchProvider>
-              <BrowserRouter>
-                <AppRoutes />
-              </BrowserRouter>
+              <AlertProvider>
+                <BrowserRouter>
+                  <AppRoutes />
+                </BrowserRouter>
+              </AlertProvider>
             </BranchProvider>
           </PermissionProvider>
         </CurrencyProvider>

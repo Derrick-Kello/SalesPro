@@ -1,5 +1,6 @@
 const express = require("express");
 const prisma = require("../prisma/client");
+const transactionOptions = require("../prisma/transactionOptions");
 const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 
 const router = express.Router();
@@ -33,10 +34,12 @@ async function warehouseForUserOr404(req, res, idParam) {
   return null;
 }
 
+const { validateReceiptTag, incrementTrackedTagQty } = require("../utils/tagHelpers");
+
 /**
  * Inventory + receipt in one transaction (supplier required — trimmed non-empty).
  */
-async function executeReceive(tx, whId, productId, quantity, supplierTrim, note, userId) {
+async function executeReceive(tx, whId, productId, quantity, supplierTrim, note, userId, tagRef) {
   const product = await tx.product.findUnique({ where: { id: productId } });
   if (!product) {
     const e = new Error("Product not found");
@@ -47,6 +50,29 @@ async function executeReceive(tx, whId, productId, quantity, supplierTrim, note,
     const e = new Error("Product is inactive");
     e.status = 400;
     throw e;
+  }
+
+  let receiptTagId = null;
+  const rawTagId = tagRef?.tagId ?? tagRef;
+  const rawTagName = tagRef?.tagName;
+  if (rawTagId != null && rawTagId !== "") {
+    const tid = parseInt(rawTagId, 10);
+    if (Number.isFinite(tid) && tid > 0) {
+      receiptTagId = await validateReceiptTag(tx, productId, tid);
+    }
+  } else if (rawTagName != null && String(rawTagName).trim()) {
+    const name = String(rawTagName).trim();
+    const tag = await tx.tag.upsert({
+      where: { name },
+      create: { name, createdById: userId },
+      update: {},
+    });
+    await tx.productTag.upsert({
+      where: { productId_tagId: { productId, tagId: tag.id } },
+      create: { productId, tagId: tag.id, quantity: 0 },
+      update: {},
+    });
+    receiptTagId = tag.id;
   }
 
   const unitCost = product.costPrice || 0;
@@ -66,10 +92,15 @@ async function executeReceive(tx, whId, productId, quantity, supplierTrim, note,
     },
   });
 
+  if (receiptTagId) {
+    await incrementTrackedTagQty(tx, productId, receiptTagId, quantity);
+  }
+
   const receipt = await tx.warehouseStockReceipt.create({
     data: {
       warehouseId: whId,
       productId,
+      tagId: receiptTagId,
       quantity,
       unitCostSnapshot: unitCost,
       lineValueTotal: lineValue,
@@ -81,6 +112,7 @@ async function executeReceive(tx, whId, productId, quantity, supplierTrim, note,
       product: { select: { id: true, name: true, category: true, costPrice: true } },
       warehouse: { select: { id: true, name: true, branchId: true } },
       receivedBy: { select: { id: true, fullName: true } },
+      tag: { select: { id: true, name: true, group: true } },
     },
   });
 
@@ -102,7 +134,7 @@ router.post(
   "/warehouse-receipts",
   checkPermission("inventory.adjust"),
   async (req, res) => {
-    const { warehouseId, productId, quantity, supplier, note } = req.body;
+    const { warehouseId, productId, quantity, supplier, note, tagId, tagName } = req.body;
 
     const whId =
       warehouseId !== undefined && warehouseId !== ""
@@ -126,8 +158,13 @@ router.post(
     if (!wh) return;
 
     try {
-      const result = await prisma.$transaction((tx) =>
-        executeReceive(tx, whId, pid, qty, supplierTrim, note, req.user.id)
+      const result = await prisma.$transaction(
+        (tx) =>
+          executeReceive(tx, whId, pid, qty, supplierTrim, note, req.user.id, {
+            tagId,
+            tagName,
+          }),
+        transactionOptions
       );
       res.status(201).json(result);
     } catch (err) {
@@ -213,8 +250,22 @@ router.post(
           pid = byBc.id;
         }
 
-        const result = await prisma.$transaction((tx) =>
-          executeReceive(tx, whId, pid, qty, supplierTrim, raw?.note, req.user.id)
+        const result = await prisma.$transaction(
+          (tx) =>
+            executeReceive(
+              tx,
+              whId,
+              pid,
+              qty,
+              supplierTrim,
+              raw?.note,
+              req.user.id,
+              {
+                tagId: raw?.tagId ?? raw?.tag_id,
+                tagName: raw?.tagName ?? raw?.tag_name ?? raw?.tag,
+              }
+            ),
+          transactionOptions
         );
         success.push({ line: lineNum, receiptId: result.receipt.id, productId: pid });
       } catch (err) {

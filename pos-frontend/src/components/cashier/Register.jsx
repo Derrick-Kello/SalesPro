@@ -3,10 +3,12 @@ import { api } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import { useBranch } from '../../context/BranchContext'
 import { useCurrency } from '../../context/CurrencyContext'
+import { useAlert } from '../../context/AlertContext'
 import Modal from '../Modal'
 import BarcodeDisplay from '../BarcodeDisplay'
 import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle, Wallet } from 'lucide-react'
 import QRCode from 'react-qr-code'
+import { productDisplayName } from '../../utils/productDisplay'
 
 const STORE_NAME = 'SalesPro'
 
@@ -20,8 +22,45 @@ const PAY_METHODS = [
   { key: 'PAYSTACK',     label: 'Paystack',      icon: Wallet },
 ]
 
+function countedTagsOnProduct(p) {
+  return (p.tags || []).filter(
+    (t) => t.quantity != null && Number.isFinite(Number(t.quantity)),
+  )
+}
+
+function usesCountedTags(p) {
+  return countedTagsOnProduct(p).length > 0
+}
+
+/** Tags the cashier must choose among at sale time (tracked qty tags, or all tags if label-only). */
+function sellableTagsForSale(p) {
+  const tags = (p.tags || []).filter(Boolean)
+  if (!tags.length) return []
+  if (usesCountedTags(p)) return countedTagsOnProduct(p)
+  return [...tags].sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), undefined, {
+      sensitivity: 'base',
+    }),
+  )
+}
+
+function tagStockCount(p, tagId) {
+  if (!tagId) return 0
+  const row = p.tags?.find((t) => String(t.id) === String(tagId))
+  if (!row || row.quantity == null || !Number.isFinite(Number(row.quantity))) return 0
+  return Number(row.quantity)
+}
+
+function lineAvailableQty(p, branchStock, tagId) {
+  if (!usesCountedTags(p)) return branchStock
+  const tid = tagId != null && tagId !== '' ? String(tagId) : ''
+  if (!tid) return 0
+  return Math.min(branchStock, tagStockCount(p, tid))
+}
+
 export default function Register() {
   const { user } = useAuth()
+  const { showError } = useAlert()
   const { fmt, currency } = useCurrency()
   const branchCtx = useBranch()
   const selectedBranchId = branchCtx?.selectedBranchId ?? null
@@ -60,7 +99,27 @@ export default function Register() {
   const lastKeyTime  = useRef(0)
   const submittingRef = useRef(false) // hard guard against double-submit
 
+  const [allTags, setAllTags] = useState([])
+  const [posTagFilterId, setPosTagFilterId] = useState('')
+  const [pendingTagPick, setPendingTagPick] = useState(null)
+
   const catalog = Array.isArray(allProducts) ? allProducts : []
+
+  function resolveSellTagId(product, explicit) {
+    const pool = sellableTagsForSale(product)
+    if (!pool.length) return ''
+
+    const exp = explicit != null && explicit !== '' ? String(explicit) : ''
+    if (exp && pool.some((t) => String(t.id) === exp)) return exp
+    if (
+      posTagFilterId &&
+      pool.some((t) => String(t.id) === String(posTagFilterId))
+    ) {
+      return String(posTagFilterId)
+    }
+    if (pool.length === 1) return String(pool[0].id)
+    return null
+  }
 
   const loadProducts = useCallback(async () => {
     try {
@@ -73,7 +132,7 @@ export default function Register() {
   function stockForProduct(p) {
     if (branchId) {
       if (p.branchInventory?.length) return p.branchInventory[0].quantity
-      return p.inventory ? p.inventory.quantity : 0
+      return 0
     }
     return p.inventory ? p.inventory.quantity : 0
   }
@@ -99,6 +158,13 @@ export default function Register() {
     api.get('/payments/paystack/status')
       .then((r) => setPaystackEnabled(Boolean(r.enabled)))
       .catch(() => setPaystackEnabled(false))
+  }, [])
+
+  useEffect(() => {
+    api
+      .get('/tags')
+      .then((r) => setAllTags(Array.isArray(r) ? r : []))
+      .catch(() => setAllTags([]))
   }, [])
 
   const showPaystack = paystackEnabled && PAYSTACK_CURRENCIES.has(currency.code)
@@ -172,13 +238,28 @@ export default function Register() {
 
   useEffect(() => {
     let filtered = catalog
-    if (category !== 'all') filtered = filtered.filter(p => p.category === category)
-    if (search) filtered = filtered.filter(p =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      (p.barcode && p.barcode.includes(search))
-    )
+    if (category !== 'all') filtered = filtered.filter((p) => p.category === category)
+    if (posTagFilterId) {
+      filtered = filtered.filter(
+        (p) =>
+          Array.isArray(p.tags) &&
+          p.tags.some((t) => String(t.id) === String(posTagFilterId)),
+      )
+    }
+    if (search) {
+      const q = search.toLowerCase()
+      filtered = filtered.filter(
+        (p) =>
+          productDisplayName(p).toLowerCase().includes(q) ||
+          (p.barcode && p.barcode.includes(search)) ||
+          (Array.isArray(p.tags) &&
+            p.tags.some(
+              (t) => t.name && String(t.name).toLowerCase().includes(q),
+            )),
+      )
+    }
     setProducts(filtered)
-  }, [category, search, catalog])
+  }, [category, search, catalog, posTagFilterId])
 
   const categories = ['all', ...[...new Set(catalog.map(p => p.category))].sort()]
 
@@ -186,7 +267,8 @@ export default function Register() {
     if (e.key !== 'Enter' || !search.trim()) return
     try {
       const raw = await api.get('/products/barcode/' + encodeURIComponent(search.trim()))
-      const product = catalog.find(p => p.id === raw.id) || raw
+      const product = catalog.find((p) => p.id === raw.id)
+      if (!product) return
       addToCart(product)
       setSearch('')
     } catch (_) {}
@@ -212,7 +294,8 @@ export default function Register() {
         if (!val.trim()) return
         try {
           const raw = await api.get('/products/barcode/' + encodeURIComponent(val.trim()))
-          const product = catalog.find(p => p.id === raw.id) || raw
+          const product = catalog.find((p) => p.id === raw.id)
+          if (!product) return
           addToCart(product)
           setSearch('')
         } catch (_) {}
@@ -220,41 +303,107 @@ export default function Register() {
     }
   }
 
-  function addToCart(product) {
+  function lineMatches(a, productId, tagId) {
+    const tb = tagId != null && tagId !== '' ? Number(tagId) : null
+    const ta = a.tagId != null && a.tagId !== '' ? Number(a.tagId) : null
+    return a.productId === productId && ta === tb
+  }
+
+  function tagLabelFromLine(productTags, tagId) {
+    if (tagId == null || tagId === '') return ''
+    const row = (productTags || []).find((t) => String(t.id) === String(tagId))
+    return row ? row.name : ''
+  }
+
+  function addToCart(product, explicitTagId) {
     const stock = stockForProduct(product)
-    setCart(prev => {
-      const existing = prev.find(i => i.productId === product.id)
+    const resolved = resolveSellTagId(product, explicitTagId)
+    if (resolved === null) {
+      setPendingTagPick(product)
+      return
+    }
+    const tagIdNum =
+      resolved === '' || resolved == null ? null : parseInt(resolved, 10)
+    const avail = lineAvailableQty(product, stock, tagIdNum)
+
+    setCart((prev) => {
+      const existing = prev.find((i) => lineMatches(i, product.id, tagIdNum))
       const currentQty = existing ? existing.quantity : 0
-      if (currentQty >= stock) {
-        alert('Only ' + stock + ' units available for ' + product.name)
+      if (currentQty >= avail) {
+        showError(
+          'Only ' +
+            avail +
+            ' units available for ' +
+            productDisplayName(product) +
+            (tagIdNum != null && tagLabelFromLine(product.tags, tagIdNum)
+              ? ' · ' + tagLabelFromLine(product.tags, tagIdNum)
+              : ''),
+        )
         return prev
       }
+      const tagLabel = tagIdNum != null ? tagLabelFromLine(product.tags, tagIdNum) : ''
       if (existing) {
-        return prev.map(i => i.productId === product.id
-          ? { ...i, quantity: i.quantity + 1, subtotal: (i.quantity + 1) * i.unitPrice }
-          : i)
+        return prev.map((i) =>
+          lineMatches(i, product.id, tagIdNum)
+            ? {
+                ...i,
+                quantity: i.quantity + 1,
+                subtotal: (i.quantity + 1) * i.unitPrice,
+              }
+            : i,
+        )
       }
-      return [...prev, {
-        productId: product.id,
-        name: product.name,
-        unitPrice: product.price,
-        quantity: 1,
-        subtotal: product.price,
-      }]
+      return [
+        ...prev,
+        {
+          productId: product.id,
+          tagId: tagIdNum,
+          tagLabel,
+          productTags: product.tags || [],
+          name: productDisplayName(product),
+          unitPrice: product.price,
+          quantity: 1,
+          subtotal: product.price,
+        },
+      ]
     })
   }
 
-  function updateQty(productId, delta) {
-    setCart(prev =>
-      prev
-        .map(i => i.productId === productId
-          ? { ...i, quantity: i.quantity + delta, subtotal: (i.quantity + delta) * i.unitPrice }
-          : i)
-        .filter(i => i.quantity > 0)
-    )
+  function updateQty(productId, tagId, delta) {
+    setCart((prev) => {
+      const p = catalog.find((x) => x.id === productId)
+      const stock = p ? stockForProduct(p) : 0
+      const tagIdNum = tagId != null && tagId !== '' ? Number(tagId) : null
+      const avail = p ? lineAvailableQty(p, stock, tagIdNum) : 0
+      return prev
+        .map((i) => {
+          if (!lineMatches(i, productId, tagId)) return i
+          const nextQ = i.quantity + delta
+          if (nextQ > avail) {
+            showError('Cannot exceed ' + avail + ' units for this line')
+            return i
+          }
+          return {
+            ...i,
+            quantity: nextQ,
+            subtotal: nextQ * i.unitPrice,
+          }
+        })
+        .filter((i) => i.quantity > 0)
+    })
   }
 
-  function removeItem(productId) { setCart(prev => prev.filter(i => i.productId !== productId)) }
+  function removeItem(productId, tagId) {
+    setCart((prev) => prev.filter((i) => !lineMatches(i, productId, tagId)))
+  }
+
+  function saleItemsPayload() {
+    return cart.map((i) => ({
+      productId: i.productId,
+      quantity: i.quantity,
+      ...(i.tagId != null && Number.isFinite(Number(i.tagId)) ? { tagId: i.tagId } : {}),
+    }))
+  }
 
   const subtotal   = cart.reduce((s, i) => s + i.subtotal, 0)
   const tax        = Number(taxInput) || 0
@@ -268,7 +417,7 @@ export default function Register() {
     : 0
 
   function openCheckout() {
-    if (!cart.length) { alert('Cart is empty'); return }
+    if (!cart.length) { showError('Cart is empty'); return }
     setPayMethod('CASH'); setAmountPaid(''); setPayRef(''); setCheckoutError('')
     setCheckoutMode('full')
     setPartialAmount('')
@@ -319,7 +468,7 @@ export default function Register() {
       const bodyFull = checkoutMode === 'full'
       const sale = await api.post('/sales', {
         customerId: customerId || null,
-        items: cart.map(i => ({ productId: i.productId, quantity: i.quantity })),
+        items: saleItemsPayload(),
         discount: Number(discount),
         tax,
         shipping: shippingAmt,
@@ -367,7 +516,7 @@ export default function Register() {
         reference: init.reference,
         grandTotal,
         currencyCode: currency.code,
-        items: cart.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        items: saleItemsPayload(),
         discount: Number(discount),
         tax,
         shipping: shippingAmt,
@@ -388,7 +537,7 @@ export default function Register() {
   }
 
   async function registerCustomer() {
-    if (!newCust.name.trim()) { alert('Name is required'); return }
+    if (!newCust.name.trim()) { showError('Name is required'); return }
     try {
       const c = await api.post('/customers', {
         name: newCust.name,
@@ -399,7 +548,7 @@ export default function Register() {
       setCustomerId(String(c.id))
       setCustomerOpen(false)
       setNewCust({ name: '', phone: '', email: '' })
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
   }
 
   function printReceipt() {
@@ -469,7 +618,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
 
         {/* Category filters */}
         <div className="category-filter">
-          {categories.map(cat => (
+          {categories.map((cat) => (
             <button
               key={cat}
               className={'filter-btn' + (category === cat ? ' active' : '')}
@@ -480,20 +629,67 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
           ))}
         </div>
 
+        <div className="category-filter" style={{ marginTop: 6 }}>
+          <span
+            style={{
+              alignSelf: 'center',
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              marginRight: 4,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Tag:
+          </span>
+          <button
+            type="button"
+            className={'filter-btn' + (!posTagFilterId ? ' active' : '')}
+            onClick={() => setPosTagFilterId('')}
+          >
+            All tags
+          </button>
+          {allTags.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              className={'filter-btn' + (String(posTagFilterId) === String(t.id) ? ' active' : '')}
+              onClick={() => setPosTagFilterId(String(t.id))}
+            >
+              {t.name}
+            </button>
+          ))}
+        </div>
+
         {/* Product grid */}
         <div className="product-grid">
-          {products.map(p => {
+          {products.map((p) => {
             const stock = stockForProduct(p)
+            const pool = sellableTagsForSale(p)
+            const sellPick = resolveSellTagId(p)
+            const tagNum =
+              sellPick === '' || sellPick == null ? null : parseInt(sellPick, 10)
+            const ambiguous =
+              pool.length > 1 &&
+              sellPick === null &&
+              !posTagFilterId
+            const avail = ambiguous ? stock : lineAvailableQty(p, stock, tagNum)
+            const canAdd = stock > 0 && avail > 0
             return (
               <div
                 key={p.id}
-                className={'product-card' + (stock === 0 ? ' out-of-stock' : '')}
-                onClick={() => stock > 0 && addToCart(p)}
+                className={'product-card' + (stock === 0 || !canAdd ? ' out-of-stock' : '')}
+                onClick={() => canAdd && addToCart(p)}
               >
-                <div className="product-name">{p.name}</div>
+                <div className="product-name">{productDisplayName(p)}</div>
                 <div className="product-price">{fmt(p.price)}</div>
                 <div className="product-stock">
-                  {stock === 0 ? 'Out of stock' : `${stock} in stock`}
+                  {stock === 0
+                    ? 'Out of stock'
+                    : ambiguous
+                      ? `${stock} in stock · tap to pick type`
+                      : usesCountedTags(p)
+                        ? `${avail} available`
+                        : `${stock} in stock`}
                 </div>
                 {p.barcode && (
                   <button
@@ -548,16 +744,40 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                 <p>No items in cart</p>
               </div>
             )
-            : cart.map(item => (
-              <div key={item.productId} className="cart-item">
-                <div className="cart-item-name">{item.name}</div>
+            : cart.map((item) => (
+              <div
+                key={`${item.productId}-${item.tagId ?? 'x'}`}
+                className="cart-item"
+              >
+                <div className="cart-item-name">
+                  {item.name}
+                  {item.tagLabel ? (
+                    <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+                      {' '}
+                      · {item.tagLabel}
+                    </span>
+                  ) : null}
+                </div>
                 <div className="cart-item-controls">
-                  <button className="qty-btn" onClick={() => updateQty(item.productId, -1)}>−</button>
+                  <button
+                    className="qty-btn"
+                    onClick={() => updateQty(item.productId, item.tagId, -1)}
+                  >
+                    −
+                  </button>
                   <span className="cart-item-qty">{item.quantity}</span>
-                  <button className="qty-btn" onClick={() => updateQty(item.productId, 1)}>+</button>
+                  <button
+                    className="qty-btn"
+                    onClick={() => updateQty(item.productId, item.tagId, 1)}
+                  >
+                    +
+                  </button>
                 </div>
                 <div className="cart-item-price">{fmt(item.subtotal)}</div>
-                <button className="cart-item-remove" onClick={() => removeItem(item.productId)}>
+                <button
+                  className="cart-item-remove"
+                  onClick={() => removeItem(item.productId, item.tagId)}
+                >
                   <X size={14} strokeWidth={2.5} />
                 </button>
               </div>
@@ -889,9 +1109,12 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
               <span>Item</span>
               <span>Amt</span>
             </div>
-            {lastSale.saleItems.map(i => (
+            {lastSale.saleItems.map((i) => (
               <div key={i.id} className="receipt-item">
-                <span>{i.product.name} x{i.quantity} @ {fmt(i.unitPrice)}</span>
+                <span>
+                  {i.product.name}
+                  {i.tag?.name ? ` (${i.tag.name})` : ''} x{i.quantity} @ {fmt(i.unitPrice)}
+                </span>
                 <span>{fmt(i.subtotal)}</span>
               </div>
             ))}
@@ -946,6 +1169,51 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
           </div>
         </Modal>
       )}
+      {/* ── Pick type (tag) for this line — exactly what the customer is buying ── */}
+      {pendingTagPick && (
+        <Modal
+          title="Choose type"
+          onClose={() => setPendingTagPick(null)}
+          footer={
+            <button type="button" className="btn btn-outline" onClick={() => setPendingTagPick(null)}>
+              Cancel
+            </button>
+          }
+        >
+          <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 12 }}>
+            Select which tag applies to this sale (the variant the customer is buying) —{' '}
+            <strong>{productDisplayName(pendingTagPick)}</strong>.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {sellableTagsForSale(pendingTagPick).map((t) => {
+              const st = stockForProduct(pendingTagPick)
+              const counted = usesCountedTags(pendingTagPick)
+              const left = counted
+                ? lineAvailableQty(pendingTagPick, st, Number(t.id))
+                : st
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ justifyContent: 'space-between', textAlign: 'left' }}
+                  onClick={() => {
+                    const p = pendingTagPick
+                    setPendingTagPick(null)
+                    addToCart(p, t.id)
+                  }}
+                >
+                  <span>{t.name}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                    {counted ? `${left} left` : `${st} at branch`}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        </Modal>
+      )}
+
       {/* ── Barcode Preview Modal ── */}
       {barcodePreview && (
         <Modal

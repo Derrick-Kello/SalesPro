@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useCurrency } from '../../context/CurrencyContext'
 import { usePermissions } from '../../context/PermissionContext'
+import { useAlert } from '../../context/AlertContext'
 import Modal from '../Modal'
 import { Printer, Filter, Trash2 } from 'lucide-react'
 
@@ -10,6 +11,7 @@ const STORE_NAME = 'SalesPro'
 export default function CashierSales() {
   const { fmt } = useCurrency()
   const { can } = usePermissions()
+  const { showError } = useAlert()
   const [view, setView]           = useState('all')
   const [sales, setSales]         = useState([])
   const [startDate, setStartDate] = useState('')
@@ -43,7 +45,7 @@ export default function CashierSales() {
     try {
       const sale = await api.get(`/sales/${id}`)
       setReceiptSale(sale); setReceiptOpen(true)
-    } catch { alert('Could not load receipt') }
+    } catch { showError('Could not load receipt') }
   }
 
   function printReceipt() {
@@ -82,7 +84,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
       await api.delete(`/sales/${id}`)
       setSelectedIds((prev) => prev.filter((x) => x !== id))
       load(view)
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
   }
 
   async function deleteSelectedSales() {
@@ -95,7 +97,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
       setSelectedIds([])
       load(view)
     } catch (err) {
-      alert(err.message || 'Bulk delete failed')
+      showError(err.message || 'Bulk delete failed')
     } finally {
       setBulkDeleting(false)
     }

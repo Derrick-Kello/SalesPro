@@ -161,7 +161,7 @@ router.put("/permissions", authorize("ADMIN"), async (req, res) => {
     await prisma.settings.upsert({
       where: { key: `permissions.${role}` },
       update: { value: JSON.stringify(clean) },
-      create: { key: `permissions.${role}`, value: JSON.stringify(clean) },
+      create: { key: `permissions.${role}`, value: JSON.stringify(clean), createdById: req.user.id },
     });
     invalidateCache();
     res.json({ message: "Permissions updated", role, permissions: clean });
@@ -190,7 +190,7 @@ router.put("/permissions/user/:id", authorize("ADMIN"), async (req, res) => {
       await prisma.settings.upsert({
         where: { key: settingsKey },
         update: { value: JSON.stringify(clean) },
-        create: { key: settingsKey, value: JSON.stringify(clean) },
+        create: { key: settingsKey, value: JSON.stringify(clean), createdById: req.user.id },
       });
     }
     invalidateCache();
@@ -254,7 +254,7 @@ router.post("/roles", authorize("ADMIN"), async (req, res) => {
       return res.status(409).json({ error: "A role with this name already exists" });
     }
     await prisma.settings.create({
-      data: { key: settingsKey, value: JSON.stringify({ name: name.trim(), permissions: clean }) },
+      data: { key: settingsKey, value: JSON.stringify({ name: name.trim(), permissions: clean }), createdById: req.user.id },
     });
     invalidateCache();
     res.status(201).json({ message: "Role created", roleKey, name: name.trim(), permissions: clean });
@@ -283,7 +283,7 @@ router.put("/roles/:key", authorize("ADMIN"), async (req, res) => {
     await prisma.settings.upsert({
       where: { key: settingsKey },
       update: { value: JSON.stringify({ name: name.trim(), permissions: clean }) },
-      create: { key: settingsKey, value: JSON.stringify({ name: name.trim(), permissions: clean }) },
+      create: { key: settingsKey, value: JSON.stringify({ name: name.trim(), permissions: clean }), createdById: req.user.id },
     });
     invalidateCache();
     res.json({ message: "Role updated", roleKey, name: name.trim(), permissions: clean });

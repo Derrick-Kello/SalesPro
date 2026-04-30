@@ -7,6 +7,8 @@ import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, ArrowRight, Trash2 } from 'lucide-react'
 import { usePermissions } from '../../context/PermissionContext'
 import { useCurrency } from '../../context/CurrencyContext'
+import { useAlert } from '../../context/AlertContext'
+import { productDisplayName } from '../../utils/productDisplay'
 
 const EMPTY = {
   productId: '',
@@ -60,6 +62,7 @@ function LocationSelector({ label, type, onTypeChange, branchValue, onBranchChan
 export default function Transfers() {
   const { can } = usePermissions()
   const { fmt } = useCurrency()
+  const { showError } = useAlert()
   const canDelete = can('transfers.delete')
   const [transfers, setTransfers]       = useState([])
   const [branches, setBranches]         = useState([])
@@ -130,7 +133,7 @@ export default function Transfers() {
 
   async function deleteTransfer(id) {
     if (!confirm('Delete this transfer record? Inventory changes will be reversed.')) return
-    try { await api.delete(`/transfers/${id}`); load() } catch (err) { alert(err.message) }
+    try { await api.delete(`/transfers/${id}`); load() } catch (err) { showError(err.message) }
   }
 
   function locationLabel(t) {
@@ -171,7 +174,7 @@ export default function Transfers() {
             {!tableLoading && transfers.map(t => (
               <tr key={t.id}>
                 <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{new Date(t.createdAt).toLocaleString()}</td>
-                <td style={{ fontWeight: 600 }}>{t.product?.name}</td>
+                <td style={{ fontWeight: 600 }}>{t.product ? productDisplayName(t.product) : '—'}</td>
                 <td style={{ fontWeight: 700 }}>{t.quantity}</td>
                 <td style={{ fontSize: 13 }}>{fmt(t.costPrice || 0)}</td>
                 <td style={{ fontSize: 13 }}>{fmt(t.unitPrice || 0)}</td>
@@ -202,7 +205,7 @@ export default function Transfers() {
               <label>Product *</label>
               <select value={form.productId} onChange={e => f('productId', e.target.value)}>
                 <option value="">Select product</option>
-                {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                {products.map(p => <option key={p.id} value={p.id}>{productDisplayName(p)}</option>)}
               </select>
             </div>
             <div className="form-group">

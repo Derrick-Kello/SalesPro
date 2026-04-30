@@ -9,6 +9,7 @@ import {
   Pencil, UserCheck, UserX, KeyRound, Search,
   Plus, Trash2, Copy,
 } from 'lucide-react'
+import { useAlert } from '../../context/AlertContext'
 
 const BUILT_IN_ROLES = ['ADMIN', 'MANAGER', 'CASHIER']
 const BUILT_IN_LABELS = { MANAGER: 'Manager', CASHIER: 'Cashier' }
@@ -115,6 +116,7 @@ function PermissionGrid({ groups, perms, onChange, roleDefaults, showResetHint }
 // ── Main Settings Component ──────────────────────────────────────────────────
 export default function Settings() {
   const { reload: reloadPerms } = usePermissions()
+  const { showError } = useAlert()
 
   const [groups, setGroups] = useState([])
   const [roles, setRoles] = useState({})
@@ -177,7 +179,7 @@ export default function Settings() {
     try {
       await api.put(`/users/${u.id}`, { isActive: !u.isActive })
       load()
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
   }
 
   function openEdit(u) {
@@ -232,7 +234,7 @@ export default function Settings() {
       setPermModal(false)
       reloadPerms()
       load()
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
     finally { setPermSaving(false) }
   }
 
@@ -245,7 +247,7 @@ export default function Settings() {
       setPermModal(false)
       reloadPerms()
       load()
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
     finally { setPermSaving(false) }
   }
 
@@ -269,7 +271,7 @@ export default function Settings() {
       setRoleSaved(true)
       reloadPerms()
       setTimeout(() => setRoleSaved(false), 3000)
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
     finally { setRoleSaving(false) }
   }
 
@@ -325,7 +327,7 @@ export default function Settings() {
       await api.delete(`/settings/roles/${key}`)
       reloadPerms()
       load()
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────

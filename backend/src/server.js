@@ -20,6 +20,8 @@ const transferRoutes = require("./routes/transfers");
 const settingsRoutes = require("./routes/settings");
 const paystackRoutes = require("./routes/paystack");
 const purchaseRoutes = require("./routes/purchase");
+const tagRoutes = require("./routes/tags");
+const storefrontRoutes = require("./routes/storefront");
 
 const prisma = require("./prisma/client");
 
@@ -92,9 +94,11 @@ app.use("/api/expenses", expenseRoutes);
 app.use("/api/branches", branchRoutes);
 app.use("/api/warehouses", warehouseRoutes);
 app.use("/api/transfers", transferRoutes);
+app.use("/api/tags", tagRoutes);
 app.use("/api/purchase", purchaseRoutes);
 app.use("/api/settings", settingsRoutes);
 app.use("/api/payments/paystack", paystackRoutes);
+app.use("/api/storefront", storefrontRoutes);
 
 // Simple health check so you can confirm the server is running
 app.get("/api/health", (req, res) => {

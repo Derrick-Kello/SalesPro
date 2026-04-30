@@ -6,6 +6,7 @@ import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { usePermissions } from '../../context/PermissionContext'
 import { Plus, Pencil, PowerOff, Boxes } from 'lucide-react'
+import { productDisplayName } from '../../utils/productDisplay'
 
 const EMPTY = { name: '', location: '', branchId: '' }
 
@@ -166,7 +167,7 @@ export default function Warehouses() {
               <select value={addProductId} onChange={e => setAddProductId(e.target.value)}>
                 <option value="">Select product</option>
                 {products.filter(p => p.isActive).map(p => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
+                  <option key={p.id} value={p.id}>{productDisplayName(p)}</option>
                 ))}
               </select>
             </div>
@@ -186,7 +187,7 @@ export default function Warehouses() {
                 )}
                 {!wiTableLoading && wiRows.filter(r => r.quantity > 0).map(r => (
                   <tr key={r.id}>
-                    <td style={{ fontWeight: 600 }}>{r.product?.name ?? '—'}</td>
+                    <td style={{ fontWeight: 600 }}>{r.product ? productDisplayName(r.product) : '—'}</td>
                     <td style={{ textAlign: 'right', fontWeight: 700 }}>{r.quantity}</td>
                     <td>
                       <span className={`badge ${r.isLowStock ? 'badge-warning' : 'badge-success'}`}>

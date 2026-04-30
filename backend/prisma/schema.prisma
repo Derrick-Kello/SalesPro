@@ -19,6 +19,7 @@ model Branch {
   phone     String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  createdById Int?
 
   users           User[]
   sales           Sale[]
@@ -28,6 +29,7 @@ model Branch {
   transfersFrom   StockTransfer[]   @relation("FromBranch")
   transfersTo     StockTransfer[]   @relation("ToBranch")
   products        Product[]         @relation("ProductBranches")
+  createdBy       User?             @relation("BranchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("branches")
 }
@@ -40,14 +42,32 @@ model Warehouse {
   branchId  Int?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+  createdById Int?
 
   branch               Branch?               @relation(fields: [branchId], references: [id])
   transfersFrom        StockTransfer[]       @relation("FromWarehouse")
   transfersTo          StockTransfer[]       @relation("ToWarehouse")
   warehouseInventory   WarehouseInventory[]
   stockReceipts        WarehouseStockReceipt[]
+  createdBy            User?                 @relation("WarehouseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("warehouses")
+}
+
+// Global tag dictionary (sizes, colours, etc.)
+model Tag {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  group     String?
+  createdAt DateTime @default(now())
+  createdById Int?
+
+  productTags            ProductTag[]
+  saleItems              SaleItem[]
+  warehouseStockReceipts WarehouseStockReceipt[]
+  createdBy              User?                  @relation("TagCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@map("tags")
 }
 
 // Log of goods received into a warehouse (purchase / intake) for audit and reporting
@@ -55,6 +75,7 @@ model WarehouseStockReceipt {
   id                Int      @id @default(autoincrement())
   warehouseId       Int
   productId         Int
+  tagId             Int?
   quantity          Int
   unitCostSnapshot  Float    @default(0)
   lineValueTotal    Float    @default(0)
@@ -65,6 +86,7 @@ model WarehouseStockReceipt {
 
   warehouse  Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
   product    Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag        Tag?      @relation(fields: [tagId], references: [id], onDelete: SetNull)
   receivedBy User      @relation(fields: [receivedById], references: [id])
 
   @@index([warehouseId, createdAt])
@@ -145,6 +167,15 @@ model User {
   sales         Sale[]
   stockTransfers StockTransfer[]
   warehouseStockReceipts WarehouseStockReceipt[]
+  createdBranches        Branch[]          @relation("BranchCreatedBy")
+  createdWarehouses      Warehouse[]       @relation("WarehouseCreatedBy")
+  createdTags            Tag[]             @relation("TagCreatedBy")
+  createdProducts        Product[]         @relation("ProductCreatedBy")
+  createdCustomers       Customer[]        @relation("CustomerCreatedBy")
+  createdSuppliers       Supplier[]        @relation("SupplierCreatedBy")
+  createdExpenseCategories ExpenseCategory[] @relation("ExpenseCategoryCreatedBy")
+  createdSettings        Settings[]        @relation("SettingsCreatedBy")
+  createdExpenses        Expense[]         @relation("ExpenseCreatedBy")
 
   @@map("users")
 }
@@ -165,6 +196,7 @@ model Product {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  createdById Int?
 
   inventory          Inventory?
   branchInventory    BranchInventory[]
@@ -173,9 +205,23 @@ model Product {
   saleItems          SaleItem[]
   stockTransfers     StockTransfer[]
   branches           Branch[]           @relation("ProductBranches")
+  productTags        ProductTag[]
+  createdBy          User?             @relation("ProductCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
-  @@unique([name, variant])
   @@map("products")
+}
+
+model ProductTag {
+  id        Int  @id @default(autoincrement())
+  productId Int
+  tagId     Int
+  quantity  Int?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, tagId])
+  @@map("product_tags")
 }
 
 // Tracks how much stock we have for each product
@@ -202,8 +248,10 @@ model Customer {
   loyaltyPoints Int     @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  createdById  Int?
 
   sales Sale[]
+  createdBy User? @relation("CustomerCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("customers")
 }
@@ -244,12 +292,14 @@ model SaleItem {
   id        Int   @id @default(autoincrement())
   saleId    Int
   productId Int
+  tagId     Int?
   quantity  Int
   unitPrice Float
   subtotal  Float
 
   sale    Sale    @relation(fields: [saleId], references: [id])
   product Product @relation(fields: [productId], references: [id])
+  tag     Tag?    @relation(fields: [tagId], references: [id], onDelete: SetNull)
 
   @@map("sale_items")
 }
@@ -287,6 +337,8 @@ model Supplier {
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+  createdById Int?
+  createdBy   User?    @relation("SupplierCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("suppliers")
 }
@@ -296,8 +348,10 @@ model ExpenseCategory {
   id        Int       @id @default(autoincrement())
   name      String    @unique
   createdAt DateTime  @default(now())
+  createdById Int?
 
   expenses  Expense[]
+  createdBy User?    @relation("ExpenseCategoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("expense_categories")
 }
@@ -307,6 +361,8 @@ model Settings {
   id    Int    @id @default(autoincrement())
   key   String @unique
   value String
+  createdById Int?
+  createdBy   User? @relation("SettingsCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("settings")
 }
@@ -321,9 +377,11 @@ model Expense {
   note        String?
   date        DateTime        @default(now())
   createdAt   DateTime        @default(now())
+  createdById Int?
 
   category    ExpenseCategory @relation(fields: [categoryId], references: [id])
   branch      Branch?         @relation(fields: [branchId], references: [id])
+  createdBy   User?           @relation("ExpenseCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@map("expenses")
 }

@@ -56,7 +56,7 @@ export async function fetchBranch(slug: string) {
 	try {
 		return await getJson<BranchSummary>(
 			`/storefront/branch/${encodeURIComponent(slug)}`,
-			{ revalidate: 60 }
+			{ cache: "no-store" }
 		);
 	} catch (err) {
 		if (err instanceof Error && err.message.includes("404")) return null;
@@ -72,7 +72,7 @@ export async function fetchProducts(slug: string, query?: { search?: string; cat
 	const suffix = qs.toString() ? `?${qs.toString()}` : "";
 	return getJson<Product[]>(
 		`/storefront/branch/${encodeURIComponent(slug)}/products${suffix}`,
-		{ revalidate: 30 }
+		{ cache: "no-store" }
 	);
 }
 
@@ -80,7 +80,7 @@ export async function fetchProduct(slug: string, id: number | string) {
 	try {
 		return await getJson<Product>(
 			`/storefront/branch/${encodeURIComponent(slug)}/products/${encodeURIComponent(String(id))}`,
-			{ revalidate: 15 }
+			{ cache: "no-store" }
 		);
 	} catch (err) {
 		if (err instanceof Error && err.message.includes("404")) return null;
@@ -92,7 +92,7 @@ export async function fetchCategories(slug: string) {
 	try {
 		return await getJson<string[]>(
 			`/storefront/branch/${encodeURIComponent(slug)}/categories`,
-			{ revalidate: 60 }
+			{ cache: "no-store" }
 		);
 	} catch {
 		return [];

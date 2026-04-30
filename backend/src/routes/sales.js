@@ -3,10 +3,16 @@
 
 const express = require("express");
 const prisma = require("../prisma/client");
+const transactionOptions = require("../prisma/transactionOptions");
 const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { invalidate } = require("../cache");
 const { resolveBranchId } = require("../utils/branchScope");
 const paystack = require("../lib/paystack");
+const {
+  assertTagSellable,
+  decrementTrackedTagQty,
+  incrementTrackedTagQty,
+} = require("../utils/tagHelpers");
 
 const FULL_PAY_TOL = 0.009;
 
@@ -111,13 +117,16 @@ router.patch("/:id/payment", authorize("ADMIN"), async (req, res) => {
     const bal = Math.max(0, roundMoney(gt - newPaid));
     const newStatus = bal <= FULL_PAY_TOL ? "COMPLETED" : "PARTIALLY_PAID";
 
-    await prisma.$transaction([
-      prisma.payment.update({
-        where: { saleId: id },
-        data: { amountPaid: newPaid, change: 0 },
-      }),
-      prisma.sale.update({ where: { id }, data: { status: newStatus } }),
-    ]);
+    await prisma.$transaction(
+      [
+        prisma.payment.update({
+          where: { saleId: id },
+          data: { amountPaid: newPaid, change: 0 },
+        }),
+        prisma.sale.update({ where: { id }, data: { status: newStatus } }),
+      ],
+      transactionOptions
+    );
 
     const updated = await prisma.sale.findUnique({
       where: { id },
@@ -180,6 +189,16 @@ router.post("/", async (req, res) => {
       where: { id: { in: productIds } },
     });
 
+    const allAssignments = await prisma.productTag.findMany({
+      where: { productId: { in: productIds } },
+      include: { tag: { select: { id: true, name: true, group: true } } },
+    });
+    const assignsByPid = {};
+    for (const a of allAssignments) {
+      if (!assignsByPid[a.productId]) assignsByPid[a.productId] = [];
+      assignsByPid[a.productId].push(a);
+    }
+
     const branchInventories = await prisma.branchInventory.findMany({
       where: { branchId, productId: { in: productIds } },
     });
@@ -192,11 +211,23 @@ router.post("/", async (req, res) => {
       if (!product) {
         return res.status(404).json({ error: `Product ID ${item.productId} not found` });
       }
+
+      const lineQty = parseInt(item.quantity, 10);
+      if (!Number.isFinite(lineQty) || lineQty <= 0) {
+        return res.status(400).json({ error: "Each line needs a positive integer quantity" });
+      }
+
+      const assignments = assignsByPid[item.productId] || [];
+      const tagParsed =
+        item.tagId != null && item.tagId !== "" ? parseInt(item.tagId, 10) : null;
+
+      assertTagSellable(assignments, Number.isFinite(tagParsed) ? tagParsed : null, lineQty, product.name);
+
       let branchInv = branchInventories.find((i) => i.productId === item.productId);
       if (!branchInv) {
         const globalInv = globalInventories.find((i) => i.productId === item.productId);
         const availableQty = globalInv?.quantity ?? 0;
-        if (availableQty < item.quantity) {
+        if (availableQty < lineQty) {
           return res.status(400).json({ error: `Not enough stock for ${product.name}` });
         }
         branchInv = await prisma.branchInventory.upsert({
@@ -205,7 +236,7 @@ router.post("/", async (req, res) => {
           create: { branchId, productId: item.productId, quantity: availableQty },
         });
         branchInventories.push(branchInv);
-      } else if (branchInv.quantity < item.quantity) {
+      } else if (branchInv.quantity < lineQty) {
         return res.status(400).json({ error: `Not enough stock for ${product.name}` });
       }
     }
@@ -213,11 +244,15 @@ router.post("/", async (req, res) => {
     let totalAmount = 0;
     const saleItemsData = items.map((item) => {
       const product = products.find((p) => p.id === item.productId);
-      const subtotal = product.price * item.quantity;
+      const qty = parseInt(item.quantity, 10);
+      const tagParsed =
+        item.tagId != null && item.tagId !== "" ? parseInt(item.tagId, 10) : null;
+      const subtotal = product.price * qty;
       totalAmount += subtotal;
       return {
         productId: item.productId,
-        quantity: item.quantity,
+        tagId: Number.isFinite(tagParsed) ? tagParsed : null,
+        quantity: qty,
         unitPrice: product.price,
         subtotal,
       };
@@ -312,12 +347,23 @@ router.post("/", async (req, res) => {
             reference: paymentReference,
           },
         }),
-        ...items.map(item =>
-          tx.branchInventory.update({
-            where: { branchId_productId: { branchId, productId: item.productId } },
-            data: { quantity: { decrement: item.quantity } },
-          })
-        ),
+        ...items.flatMap((item) => {
+          const qty = parseInt(item.quantity, 10);
+          const tagParsed =
+            item.tagId != null && item.tagId !== "" ? parseInt(item.tagId, 10) : null;
+          return [
+            tx.branchInventory.update({
+              where: { branchId_productId: { branchId, productId: item.productId } },
+              data: { quantity: { decrement: qty } },
+            }),
+            decrementTrackedTagQty(
+              tx,
+              item.productId,
+              Number.isFinite(tagParsed) ? tagParsed : null,
+              qty
+            ),
+          ];
+        }),
         ...(customerId ? [
           tx.customer.update({
             where: { id: parseInt(customerId) },
@@ -327,12 +373,17 @@ router.post("/", async (req, res) => {
       ]);
 
       return newSale;
-    }, { timeout: 15000 });
+    }, transactionOptions);
 
     const completeSale = await prisma.sale.findUnique({
       where: { id: sale.id },
       include: {
-        saleItems: { include: { product: { select: { id: true, name: true, price: true, category: true, barcode: true } } } },
+        saleItems: {
+          include: {
+            product: { select: { id: true, name: true, price: true, category: true, barcode: true } },
+            tag: { select: { id: true, name: true, group: true } },
+          },
+        },
         user: { select: { fullName: true, username: true } },
         customer: true,
         branch: { select: { name: true } },
@@ -343,6 +394,9 @@ router.post("/", async (req, res) => {
     res.status(201).json(augmentSaleJson(completeSale));
     invalidate("overview-stats");
   } catch (err) {
+    if (err.status === 400) {
+      return res.status(400).json({ error: err.message });
+    }
     console.error(err);
     res.status(500).json({ error: "Sale processing failed" });
   }
@@ -380,21 +434,22 @@ router.post("/bulk-delete", authorize("ADMIN"), checkPermission("sales.delete"),
         const id = sale.id;
         if ((sale.status === "COMPLETED" || sale.status === "PARTIALLY_PAID") && sale.branchId) {
           await Promise.all(
-            sale.saleItems.map((item) =>
+            sale.saleItems.flatMap((item) => [
               tx.branchInventory
                 .update({
                   where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
                   data: { quantity: { increment: item.quantity } },
                 })
-                .catch(() => {})
-            )
+                .catch(() => {}),
+              incrementTrackedTagQty(tx, item.productId, item.tagId, item.quantity),
+            ])
           );
         }
         await tx.payment.deleteMany({ where: { saleId: id } });
         await tx.saleItem.deleteMany({ where: { saleId: id } });
         await tx.sale.delete({ where: { id } });
       }
-    }, { timeout: 120000 });
+    }, { ...transactionOptions, timeout: 120_000 });
 
     res.json({ deleted: ids.length, message: `${ids.length} sale(s) deleted` });
     invalidate("overview-stats");
@@ -424,15 +479,16 @@ router.put("/:id/cancel", authorize("ADMIN", "MANAGER"), checkPermission("sales.
 
       if (sale.branchId) {
         await Promise.all(
-          sale.saleItems.map(item =>
+          sale.saleItems.flatMap((item) => [
             tx.branchInventory.update({
               where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
               data: { quantity: { increment: item.quantity } },
-            })
-          )
+            }),
+            incrementTrackedTagQty(tx, item.productId, item.tagId, item.quantity),
+          ])
         );
       }
-    }, { timeout: 15000 });
+    }, transactionOptions);
 
     res.json({ message: "Sale cancelled and stock restored" });
   } catch (err) {
@@ -453,18 +509,21 @@ router.delete("/:id", authorize("ADMIN"), checkPermission("sales.delete"), async
     await prisma.$transaction(async (tx) => {
       if ((sale.status === "COMPLETED" || sale.status === "PARTIALLY_PAID") && sale.branchId) {
         await Promise.all(
-          sale.saleItems.map(item =>
-            tx.branchInventory.update({
-              where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
-              data: { quantity: { increment: item.quantity } },
-            }).catch(() => {})
-          )
+          sale.saleItems.flatMap((item) => [
+            tx.branchInventory
+              .update({
+                where: { branchId_productId: { branchId: sale.branchId, productId: item.productId } },
+                data: { quantity: { increment: item.quantity } },
+              })
+              .catch(() => {}),
+            incrementTrackedTagQty(tx, item.productId, item.tagId, item.quantity),
+          ])
         );
       }
       await tx.payment.deleteMany({ where: { saleId: id } });
       await tx.saleItem.deleteMany({ where: { saleId: id } });
       await tx.sale.delete({ where: { id } });
-    }, { timeout: 15000 });
+    }, transactionOptions);
 
     res.json({ message: "Sale deleted" });
   } catch (err) {

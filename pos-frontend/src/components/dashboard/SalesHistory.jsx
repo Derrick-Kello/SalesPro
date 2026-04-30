@@ -8,10 +8,12 @@ import { LoadingRow } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { useAuth } from '../../context/AuthContext'
+import { useAlert } from '../../context/AlertContext'
 import { Eye, Filter, Trash2, Pencil } from 'lucide-react'
 
 export default function SalesHistory() {
   const { user } = useAuth()
+  const { showError } = useAlert()
   const { selectedBranchId } = useBranch()
   const { fmt } = useCurrency()
   const { can } = usePermissions()
@@ -64,7 +66,7 @@ export default function SalesHistory() {
       await api.delete(`/sales/${id}`)
       setSelectedIds((prev) => prev.filter((i) => i !== id))
       load()
-    } catch (err) { alert(err.message) }
+    } catch (err) { showError(err.message) }
   }
 
   async function deleteSelectedSales() {
@@ -77,7 +79,7 @@ export default function SalesHistory() {
       setSelectedIds([])
       load()
     } catch (err) {
-      alert(err.message || 'Bulk delete failed')
+      showError(err.message || 'Bulk delete failed')
     } finally {
       setBulkDeleting(false)
     }
@@ -115,14 +117,14 @@ export default function SalesHistory() {
       setDetail(fresh)
       setEditAddition('')
       setEditOpen(true)
-    } catch (_) { alert('Could not load sale') }
+    } catch (_) { showError('Could not load sale') }
   }
 
   async function saveAdditionalPayment() {
     if (!detail) return
     const n = parseFloat(editAddition)
     if (Number.isNaN(n) || n <= 0) {
-      alert('Enter a positive additional amount')
+      showError('Enter a positive additional amount')
       return
     }
     setEditSaving(true)
@@ -133,7 +135,7 @@ export default function SalesHistory() {
       setEditAddition('')
       await load(false, true)
     } catch (e) {
-      alert(e.message || 'Could not save payment')
+      showError(e.message || 'Could not save payment')
     } finally {
       setEditSaving(false)
     }

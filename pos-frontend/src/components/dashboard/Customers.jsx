@@ -4,6 +4,7 @@ import { useCurrency } from '../../context/CurrencyContext'
 import Modal from '../Modal'
 import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { usePermissions } from '../../context/PermissionContext'
+import { useAlert } from '../../context/AlertContext'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, History, Search, Trash2 } from 'lucide-react'
@@ -13,6 +14,7 @@ const EMPTY = { name: '', phone: '', email: '', address: '' }
 export default function Customers() {
   const { fmt } = useCurrency()
   const { can } = usePermissions()
+  const { showError } = useAlert()
   const [customers, setCustomers]       = useState([])
   const [search, setSearch]             = useState('')
   const [modal, setModal]               = useState(false)
@@ -40,7 +42,7 @@ export default function Customers() {
 
   async function deleteCustomer(id) {
     if (!confirm('Delete this customer? This cannot be undone.')) return
-    try { await api.delete(`/customers/${id}`); load() } catch (err) { alert(err.message) }
+    try { await api.delete(`/customers/${id}`); load() } catch (err) { showError(err.message) }
   }
 
   async function viewHistory(id) {

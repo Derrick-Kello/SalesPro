@@ -16,7 +16,7 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("suppliers.creat
   const { name, phone, email, address, company } = req.body;
   if (!name) return res.status(400).json({ error: "Name is required" });
   try {
-    const supplier = await prisma.supplier.create({ data: { name, phone, email, address, company } });
+    const supplier = await prisma.supplier.create({ data: { name, phone, email, address, company, createdById: req.user.id } });
     res.status(201).json(supplier);
   } catch { res.status(500).json({ error: "Could not create supplier" }); }
 });

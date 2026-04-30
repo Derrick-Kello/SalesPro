@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useCart } from "@/components/CartProvider";
 import { useAuth } from "@/components/AuthProvider";
+import { useNotice } from "@/components/NoticeProvider";
 import { formatMoney } from "@/lib/money";
 import type { Product, ProductTag } from "@/lib/types";
 
@@ -20,6 +21,7 @@ export function ProductPurchasePanel({ product }: Props) {
 	const pathname = usePathname();
 	const { addLine } = useCart();
 	const { isAuthenticated } = useAuth();
+	const { notify } = useNotice();
 	const groupNames = useMemo(() => Object.keys(product.variantGroups), [product]);
 	const firstAvailableTag = useMemo(() => {
 		for (const group of Object.values(product.variantGroups)) {
@@ -66,7 +68,7 @@ export function ProductPurchasePanel({ product }: Props) {
 	function handleAdd() {
 		if (cantBuy) return;
 		if (!isAuthenticated) {
-			window.alert("Please sign up to add products to cart.");
+			notify("Please sign up to add products to cart.", "info");
 			router.push(`/signup?next=${encodeURIComponent(pathname || `/products/${product.id}`)}`);
 			return;
 		}
@@ -86,7 +88,7 @@ export function ProductPurchasePanel({ product }: Props) {
 	function handleBuyNow() {
 		if (cantBuy) return;
 		if (!isAuthenticated) {
-			window.alert("Please sign up to continue.");
+			notify("Please sign up to continue.", "info");
 			router.push(`/signup?next=${encodeURIComponent(pathname || `/products/${product.id}`)}`);
 			return;
 		}
