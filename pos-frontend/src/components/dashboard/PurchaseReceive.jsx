@@ -23,6 +23,8 @@ function sheetRowsToBulkLines(rows) {
     const qty = parseInt(n.quantity ?? n.qty ?? n.units, 10)
     const supplier = n.supplier != null ? String(n.supplier).trim() : ''
     const note = n.note != null ? String(n.note).trim() : ''
+    const paidRaw = n.is_paid ?? n.paid ?? n.payment_status ?? n.status
+    const isPaid = ['1', 'true', 'yes', 'paid'].includes(String(paidRaw ?? '').trim().toLowerCase())
     if (!Number.isFinite(qty) || qty <= 0) continue
     if (!(Number.isFinite(pid) && pid > 0) && !barcode) continue
     out.push({
@@ -30,6 +32,7 @@ function sheetRowsToBulkLines(rows) {
       barcode: barcode || undefined,
       quantity: qty,
       supplier,
+      isPaid,
       note: note || undefined,
     })
   }
@@ -47,6 +50,7 @@ export default function PurchaseReceive() {
   const [quantity, setQuantity] = useState('')
   const [supplier, setSupplier] = useState('')
   const [note, setNote] = useState('')
+  const [paymentStatus, setPaymentStatus] = useState('unpaid')
   const [newVariantRows, setNewVariantRows] = useState([])
   const [lastSuccess, setLastSuccess] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -155,6 +159,7 @@ export default function PurchaseReceive() {
             productId: created.id,
             quantity: row.qty,
             supplier: sup,
+            isPaid: paymentStatus === 'paid',
             note: note.trim() ? note.trim() : undefined,
           })
         }
@@ -163,6 +168,7 @@ export default function PurchaseReceive() {
           productId: pid,
           quantity: baseQty,
           supplier: sup,
+          isPaid: paymentStatus === 'paid',
           note: note.trim() ? note.trim() : undefined,
         })
       }
@@ -179,6 +185,7 @@ export default function PurchaseReceive() {
       })
       setQuantity('')
       setNote('')
+      setPaymentStatus('unpaid')
       setNewVariantRows([])
       await load()
     })
@@ -253,6 +260,7 @@ export default function PurchaseReceive() {
         const o = {
           quantity: L.quantity,
           supplier: L.supplier.trim(),
+          isPaid: Boolean(L.isPaid),
           note: L.note || undefined,
         }
         if (L.productId) o.productId = L.productId
@@ -290,6 +298,7 @@ export default function PurchaseReceive() {
     setQuantity(String(L.quantity))
     setSupplier(L.supplier)
     setNote(L.note || '')
+    setPaymentStatus(L.isPaid ? 'paid' : 'unpaid')
   }
 
   return (
@@ -443,6 +452,13 @@ export default function PurchaseReceive() {
                   placeholder="Reference, invoice #"
                 />
               </div>
+              <div className="form-group">
+                <label>Payment status</label>
+                <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
 
               {selected && previewQty > 0 && (
                 <div
@@ -577,6 +593,7 @@ export default function PurchaseReceive() {
                       <th>Product</th>
                       <th>Qty</th>
                       <th>Supplier</th>
+                      <th>Status</th>
                       <th>Note</th>
                     </tr>
                   </thead>
@@ -587,6 +604,7 @@ export default function PurchaseReceive() {
                         <td>{linePreviewLabel(L)}</td>
                         <td>{L.quantity}</td>
                         <td>{L.supplier}</td>
+                        <td>{L.isPaid ? 'Paid' : 'Unpaid'}</td>
                         <td>{L.note || '—'}</td>
                       </tr>
                     ))}

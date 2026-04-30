@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import CashierPage from './pages/CashierPage'
+import PurchaseMotherDetailsPage from './pages/PurchaseMotherDetailsPage'
 import { useAuth } from './context/AuthContext'
 import { AuthProvider } from './context/AuthContext'
 import { BranchProvider } from './context/BranchContext'
@@ -61,6 +62,9 @@ function AppRoutes() {
       } />
       <Route path="/cashier" element={
         <ProtectedRoute><CashierPage /></ProtectedRoute>
+      } />
+      <Route path="/dashboard/purchase-history/details" element={
+        <ProtectedRoute><PurchaseMotherDetailsPage /></ProtectedRoute>
       } />
       <Route path="*" element={<Navigate to={token ? dest : '/login'} replace />} />
     </Routes>
