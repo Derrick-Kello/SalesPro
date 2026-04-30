@@ -34,7 +34,17 @@ async function warehouseForUserOr404(req, res, idParam) {
   return null;
 }
 
-const { validateReceiptTag, incrementTrackedTagQty } = require("../utils/tagHelpers");
+const {
+  validateReceiptTag,
+  incrementTrackedTagQty,
+  decrementTrackedTagQty,
+} = require("../utils/tagHelpers");
+
+const PURCHASE_STATUSES = new Set(["UNPAID", "PARTIAL", "PAID", "RETURNED"]);
+function normalizePurchaseStatus(input, fallback = "UNPAID") {
+  const v = String(input || fallback).trim().toUpperCase();
+  return PURCHASE_STATUSES.has(v) ? v : fallback;
+}
 
 /**
  * Inventory + receipt in one transaction (supplier required — trimmed non-empty).
@@ -96,6 +106,10 @@ async function executeReceive(tx, whId, productId, quantity, supplierTrim, note,
     await incrementTrackedTagQty(tx, productId, receiptTagId, quantity);
   }
 
+  const paymentStatus = normalizePurchaseStatus(
+    tagRef?.paymentStatus,
+    tagRef?.isPaid ? "PAID" : "UNPAID"
+  );
   const receipt = await tx.warehouseStockReceipt.create({
     data: {
       warehouseId: whId,
@@ -104,6 +118,9 @@ async function executeReceive(tx, whId, productId, quantity, supplierTrim, note,
       quantity,
       unitCostSnapshot: unitCost,
       lineValueTotal: lineValue,
+      isPaid: paymentStatus === "PAID",
+      paymentStatus,
+      paidAt: paymentStatus === "PAID" ? new Date() : null,
       supplier: supplierTrim,
       note: note && String(note).trim() ? String(note).trim() : null,
       receivedById: userId,
@@ -134,7 +151,7 @@ router.post(
   "/warehouse-receipts",
   checkPermission("inventory.adjust"),
   async (req, res) => {
-    const { warehouseId, productId, quantity, supplier, note, tagId, tagName } = req.body;
+    const { warehouseId, productId, quantity, supplier, note, tagId, tagName, isPaid, paymentStatus } = req.body;
 
     const whId =
       warehouseId !== undefined && warehouseId !== ""
@@ -163,6 +180,8 @@ router.post(
           executeReceive(tx, whId, pid, qty, supplierTrim, note, req.user.id, {
             tagId,
             tagName,
+            isPaid: Boolean(isPaid),
+            paymentStatus,
           }),
         transactionOptions
       );
@@ -263,6 +282,8 @@ router.post(
               {
                 tagId: raw?.tagId ?? raw?.tag_id,
                 tagName: raw?.tagName ?? raw?.tag_name ?? raw?.tag,
+                isPaid: Boolean(raw?.isPaid),
+                paymentStatus: raw?.paymentStatus,
               }
             ),
           transactionOptions
@@ -364,5 +385,200 @@ router.get("/warehouse-receipts", async (req, res) => {
     res.status(500).json({ error: "Could not load purchase history" });
   }
 });
+
+router.patch("/warehouse-receipts/bulk-edit", checkPermission("inventory.adjust"), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids is required" });
+  const supplier = req.body?.supplier != null ? String(req.body.supplier).trim() : undefined;
+  const note = req.body?.note != null ? String(req.body.note).trim() : undefined;
+
+  try {
+    const rows = await prisma.warehouseStockReceipt.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, warehouseId: true },
+    });
+    const allowedIds = [];
+    for (const r of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      const wh = await warehouseForUserOr404(req, res, String(r.warehouseId));
+      if (!wh) return;
+      allowedIds.push(r.id);
+    }
+    const data = {};
+    if (supplier !== undefined) data.supplier = supplier || null;
+    if (note !== undefined) data.note = note || null;
+    if (!Object.keys(data).length) return res.status(400).json({ error: "Nothing to update" });
+    await prisma.warehouseStockReceipt.updateMany({ where: { id: { in: allowedIds } }, data });
+    res.json({ updated: allowedIds.length });
+  } catch (err) {
+    console.error("[PATCH /purchase/warehouse-receipts/bulk-edit]", err);
+    res.status(500).json({ error: "Could not update purchase rows" });
+  }
+});
+
+router.post("/warehouse-receipts/bulk-payment", checkPermission("inventory.adjust"), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids is required" });
+  const status = normalizePurchaseStatus(req.body?.paymentStatus);
+  const isPaid = status === "PAID";
+  try {
+    const rows = await prisma.warehouseStockReceipt.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, warehouseId: true },
+    });
+    for (const r of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      const wh = await warehouseForUserOr404(req, res, String(r.warehouseId));
+      if (!wh) return;
+    }
+    await prisma.warehouseStockReceipt.updateMany({
+      where: { id: { in: ids } },
+      data: {
+        paymentStatus: status,
+        isPaid,
+        paidAt: isPaid ? new Date() : null,
+      },
+    });
+    res.json({ updated: ids.length, paymentStatus: status });
+  } catch (err) {
+    console.error("[POST /purchase/warehouse-receipts/bulk-payment]", err);
+    res.status(500).json({ error: "Could not update payment status" });
+  }
+});
+
+router.post("/warehouse-receipts/bulk-return", checkPermission("inventory.adjust"), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids is required" });
+  const reason = String(req.body?.note || "Purchase return").trim();
+
+  try {
+    const rows = await prisma.warehouseStockReceipt.findMany({
+      where: { id: { in: ids } },
+      include: { warehouse: { select: { id: true } } },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      for (const r of rows) {
+        const wh = await warehouseForUserOr404(req, res, String(r.warehouseId));
+        if (!wh) throw new Error("Forbidden");
+        if (r.quantity <= 0) continue;
+
+        const wi = await tx.warehouseInventory.findUnique({
+          where: { warehouseId_productId: { warehouseId: r.warehouseId, productId: r.productId } },
+          select: { quantity: true },
+        });
+        if (!wi || wi.quantity < r.quantity) {
+          const e = new Error(`Insufficient stock to return receipt #${r.id}`);
+          e.status = 409;
+          throw e;
+        }
+        await tx.warehouseInventory.update({
+          where: { warehouseId_productId: { warehouseId: r.warehouseId, productId: r.productId } },
+          data: { quantity: { decrement: r.quantity } },
+        });
+        if (r.tagId) await decrementTrackedTagQty(tx, r.productId, r.tagId, r.quantity);
+        await tx.warehouseStockReceipt.create({
+          data: {
+            warehouseId: r.warehouseId,
+            productId: r.productId,
+            tagId: r.tagId,
+            quantity: -Math.abs(r.quantity),
+            unitCostSnapshot: r.unitCostSnapshot,
+            lineValueTotal: -Math.abs(r.lineValueTotal || r.unitCostSnapshot * r.quantity),
+            supplier: r.supplier,
+            note: `RETURN of #${r.id}${reason ? ` — ${reason}` : ""}`,
+            receivedById: req.user.id,
+            paymentStatus: "RETURNED",
+            isPaid: false,
+          },
+        });
+        await tx.warehouseStockReceipt.update({
+          where: { id: r.id },
+          data: { paymentStatus: "RETURNED", isPaid: false, paidAt: null },
+        });
+      }
+    }, transactionOptions);
+    res.json({ returned: ids.length });
+  } catch (err) {
+    console.error("[POST /purchase/warehouse-receipts/bulk-return]", err);
+    res.status(err.status || 500).json({ error: err.message || "Could not return purchases" });
+  }
+});
+
+/**
+ * Delete one warehouse receipt line and reverse its stock impact.
+ */
+router.delete(
+  "/warehouse-receipts/:id",
+  checkPermission("inventory.adjust"),
+  async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: "Invalid receipt id" });
+    }
+
+    const row = await prisma.warehouseStockReceipt.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        warehouseId: true,
+        productId: true,
+        quantity: true,
+        tagId: true,
+      },
+    });
+    if (!row) return res.status(404).json({ error: "Receipt not found" });
+
+    const wh = await warehouseForUserOr404(req, res, String(row.warehouseId));
+    if (!wh) return;
+
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          const wi = await tx.warehouseInventory.findUnique({
+            where: {
+              warehouseId_productId: {
+                warehouseId: row.warehouseId,
+                productId: row.productId,
+              },
+            },
+            select: { quantity: true },
+          });
+          if (!wi || wi.quantity < row.quantity) {
+            const e = new Error("Cannot delete receipt: insufficient warehouse stock to reverse.");
+            e.status = 409;
+            throw e;
+          }
+
+          await tx.warehouseInventory.update({
+            where: {
+              warehouseId_productId: {
+                warehouseId: row.warehouseId,
+                productId: row.productId,
+              },
+            },
+            data: { quantity: { decrement: row.quantity } },
+          });
+
+          if (row.tagId) {
+            await decrementTrackedTagQty(tx, row.productId, row.tagId, row.quantity);
+          }
+
+          await tx.warehouseStockReceipt.delete({ where: { id: row.id } });
+        },
+        transactionOptions
+      );
+
+      res.json({ message: "Receipt deleted and inventory reversed" });
+    } catch (err) {
+      console.error("[DELETE /purchase/warehouse-receipts/:id]", err);
+      const status = err.status || 500;
+      if (status >= 500) {
+        return res.status(500).json({ error: "Could not delete receipt" });
+      }
+      return res.status(status).json({ error: err.message || "Could not delete receipt" });
+    }
+  }
+);
 
 module.exports = router;

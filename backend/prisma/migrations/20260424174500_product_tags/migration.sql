@@ -30,8 +30,29 @@ ALTER TABLE "sale_items" ADD COLUMN "tagId" INTEGER;
 ALTER TABLE "sale_items"
   ADD CONSTRAINT "sale_items_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "tags"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
-ALTER TABLE "warehouse_stock_receipts" ADD COLUMN "tagId" INTEGER;
-ALTER TABLE "warehouse_stock_receipts"
-  ADD CONSTRAINT "warehouse_stock_receipts_tagId_fkey" FOREIGN KEY ("tagId") REFERENCES "tags"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF to_regclass('public.warehouse_stock_receipts') IS NOT NULL THEN
+    IF NOT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'warehouse_stock_receipts'
+        AND column_name = 'tagId'
+    ) THEN
+      ALTER TABLE "warehouse_stock_receipts" ADD COLUMN "tagId" INTEGER;
+    END IF;
+
+    IF NOT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'warehouse_stock_receipts_tagId_fkey'
+    ) THEN
+      ALTER TABLE "warehouse_stock_receipts"
+        ADD CONSTRAINT "warehouse_stock_receipts_tagId_fkey"
+        FOREIGN KEY ("tagId") REFERENCES "tags"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+    END IF;
+  END IF;
+END $$;
 
 DROP INDEX IF EXISTS "products_name_variant_key";

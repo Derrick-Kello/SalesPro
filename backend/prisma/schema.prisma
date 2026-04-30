@@ -9,6 +9,7 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // Branch model - represents a retail location
@@ -79,6 +80,9 @@ model WarehouseStockReceipt {
   quantity          Int
   unitCostSnapshot  Float    @default(0)
   lineValueTotal    Float    @default(0)
+  isPaid            Boolean  @default(false)
+  paymentStatus     String   @default("UNPAID")
+  paidAt            DateTime?
   supplier          String?
   note              String?
   receivedById      Int
