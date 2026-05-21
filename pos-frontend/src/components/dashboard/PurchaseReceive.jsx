@@ -4,7 +4,7 @@ import { useCurrency } from '../../context/CurrencyContext'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { SaveBtn } from '../LoadingRow'
-import { PackagePlus, FileUp } from 'lucide-react'
+import { PackagePlus, FileUp, ChevronDown } from 'lucide-react'
 import * as XLSX from 'xlsx'
 import { productDisplayName } from '../../utils/productDisplay'
 
@@ -42,11 +42,16 @@ function sheetRowsToBulkLines(rows) {
 export default function PurchaseReceive() {
   const { fmt } = useCurrency()
   const csvRef = useRef(null)
+  const productComboRef = useRef(null)
+  const productSearchInputRef = useRef(null)
 
   const [warehouses, setWarehouses] = useState([])
   const [products, setProducts] = useState([])
+  const [suppliers, setSuppliers] = useState([])
   const [warehouseId, setWarehouseId] = useState('')
   const [productId, setProductId] = useState('')
+  const [productSearch, setProductSearch] = useState('')
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false)
   const [quantity, setQuantity] = useState('')
   const [supplier, setSupplier] = useState('')
   const [note, setNote] = useState('')
@@ -68,6 +73,41 @@ export default function PurchaseReceive() {
   }, [products])
 
   const selected = productMap[productId] || null
+  const activeProducts = useMemo(
+    () => products.filter((p) => p.isActive !== false),
+    [products]
+  )
+  const filteredProducts = useMemo(() => {
+    const q = productSearch.trim().toLowerCase()
+    if (!q) return activeProducts
+    return activeProducts.filter((p) => {
+      const name = productDisplayName(p).toLowerCase()
+      return (
+        name.includes(q) ||
+        String(p.id).includes(q) ||
+        (p.barcode && String(p.barcode).toLowerCase().includes(q))
+      )
+    })
+  }, [activeProducts, productSearch])
+
+  const productSelectOptions = useMemo(() => {
+    if (!selected || filteredProducts.some((p) => p.id === selected.id)) {
+      return filteredProducts
+    }
+    return [selected, ...filteredProducts]
+  }, [filteredProducts, selected])
+
+  function closeProductDropdown() {
+    setProductDropdownOpen(false)
+    setProductSearch('')
+  }
+
+  function selectProduct(p) {
+    setProductId(String(p.id))
+    setQuantity('')
+    setNewVariantRows([])
+    closeProductDropdown()
+  }
   const subVariantQtyTotal = newVariantRows.reduce(
     (sum, r) => sum + (parseInt(r.quantity, 10) || 0),
     0
@@ -79,12 +119,18 @@ export default function PurchaseReceive() {
   async function load() {
     setLoading(true)
     try {
-      const [wh, pr] = await Promise.all([api.get('/warehouses'), api.get('/products')])
+      const [wh, pr, sp] = await Promise.all([
+        api.get('/warehouses'),
+        api.get('/products'),
+        api.get('/suppliers'),
+      ])
       setWarehouses(wh.filter((w) => w.isActive !== false))
       setProducts(pr)
+      setSuppliers(Array.isArray(sp) ? sp : [])
     } catch {
       setWarehouses([])
       setProducts([])
+      setSuppliers([])
     } finally {
       setLoading(false)
     }
@@ -94,6 +140,25 @@ export default function PurchaseReceive() {
     load()
   }, [])
   useTabRefresh('purchase-receive', () => load())
+
+  useEffect(() => {
+    if (!productDropdownOpen) return
+    function onDocClick(e) {
+      if (productComboRef.current && !productComboRef.current.contains(e.target)) {
+        closeProductDropdown()
+      }
+    }
+    function onKeyDown(e) {
+      if (e.key === 'Escape') closeProductDropdown()
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKeyDown)
+    productSearchInputRef.current?.focus()
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [productDropdownOpen])
 
   async function submit(e) {
     e.preventDefault()
@@ -296,7 +361,12 @@ export default function PurchaseReceive() {
       else setSaveErr(`No active product with barcode ${L.barcode}`)
     }
     setQuantity(String(L.quantity))
-    setSupplier(L.supplier)
+    if (suppliers.some((s) => s.name === L.supplier)) {
+      setSupplier(L.supplier)
+    } else {
+      setSupplier('')
+      setSaveErr(L.supplier ? `Supplier "${L.supplier}" is not in People > Suppliers. Select one from the list.` : 'Select a supplier from the list.')
+    }
     setNote(L.note || '')
     setPaymentStatus(L.isPaid ? 'paid' : 'unpaid')
   }
@@ -349,22 +419,69 @@ export default function PurchaseReceive() {
               </div>
               <div className="form-group">
                 <label>Product *</label>
-                <select
-                  value={productId}
-                  onChange={(e) => {
-                    setProductId(e.target.value)
-                    setQuantity('')
-                    setNewVariantRows([])
-                  }}
-                  required
+                <div
+                  className={`product-select-combo${productDropdownOpen ? ' is-open' : ''}`}
+                  ref={productComboRef}
                 >
-                  <option value="">Select product</option>
-                  {products.filter((p) => p.isActive).map((p) => (
-                    <option key={p.id} value={p.id}>
-                      #{p.id} · {productDisplayName(p)}
-                    </option>
-                  ))}
-                </select>
+                  <button
+                    type="button"
+                    className="product-select-trigger"
+                    aria-expanded={productDropdownOpen}
+                    aria-haspopup="listbox"
+                    onClick={() =>
+                      productDropdownOpen ? closeProductDropdown() : setProductDropdownOpen(true)
+                    }
+                  >
+                    <span className={!selected ? 'product-select-placeholder' : undefined}>
+                      {selected
+                        ? `#${selected.id} · ${productDisplayName(selected)}`
+                        : 'Select product'}
+                    </span>
+                    <ChevronDown
+                      size={16}
+                      style={{
+                        flexShrink: 0,
+                        color: 'var(--text-muted)',
+                        transform: productDropdownOpen ? 'rotate(180deg)' : undefined,
+                        transition: 'transform 0.15s ease',
+                      }}
+                    />
+                  </button>
+                  {productDropdownOpen ? (
+                    <div className="product-select-dropdown" role="listbox">
+                      <input
+                        ref={productSearchInputRef}
+                        type="search"
+                        value={productSearch}
+                        onChange={(e) => setProductSearch(e.target.value)}
+                        placeholder="Search by name, ID, or barcode…"
+                        autoComplete="off"
+                        aria-label="Search products"
+                      />
+                      <div className="product-select-options">
+                        {productSelectOptions.length === 0 ? (
+                          <div className="product-select-empty">No products match your search</div>
+                        ) : (
+                          productSelectOptions.slice(0, 100).map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              role="option"
+                              aria-selected={String(p.id) === String(productId)}
+                              className={`product-select-option${
+                                String(p.id) === String(productId) ? ' is-selected' : ''
+                              }`}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => selectProduct(p)}
+                            >
+                              #{p.id} · {productDisplayName(p)}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
               </div>
               <div className="form-group">
                 <label>
@@ -436,12 +553,18 @@ export default function PurchaseReceive() {
                 </div>
                 <div className="form-group">
                   <label>Supplier *</label>
-                  <input
+                  <select
                     value={supplier}
                     onChange={(e) => setSupplier(e.target.value)}
-                    placeholder="Vendor / supplier name"
                     required
-                  />
+                  >
+                    <option value="">Select supplier</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name}{s.company ? ` · ${s.company}` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="form-group">
