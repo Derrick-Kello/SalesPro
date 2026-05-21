@@ -405,7 +405,12 @@ router.patch("/warehouse-receipts/bulk-edit", checkPermission("inventory.adjust"
       allowedIds.push(r.id);
     }
     const data = {};
-    if (supplier !== undefined) data.supplier = supplier || null;
+    if (supplier !== undefined) {
+      if (!supplier) {
+        return res.status(400).json({ error: "Supplier is required" });
+      }
+      data.supplier = supplier;
+    }
     if (note !== undefined) data.note = note || null;
     if (!Object.keys(data).length) return res.status(400).json({ error: "Nothing to update" });
     await prisma.warehouseStockReceipt.updateMany({ where: { id: { in: allowedIds } }, data });
@@ -505,6 +510,77 @@ router.post("/warehouse-receipts/bulk-return", checkPermission("inventory.adjust
   }
 });
 
+async function deleteReceiptInTransaction(tx, row) {
+  const wi = await tx.warehouseInventory.findUnique({
+    where: {
+      warehouseId_productId: {
+        warehouseId: row.warehouseId,
+        productId: row.productId,
+      },
+    },
+    select: { quantity: true },
+  });
+  if (!wi || wi.quantity < row.quantity) {
+    const e = new Error(`Cannot delete receipt #${row.id}: insufficient warehouse stock to reverse.`);
+    e.status = 409;
+    throw e;
+  }
+
+  await tx.warehouseInventory.update({
+    where: {
+      warehouseId_productId: {
+        warehouseId: row.warehouseId,
+        productId: row.productId,
+      },
+    },
+    data: { quantity: { decrement: row.quantity } },
+  });
+
+  if (row.tagId) {
+    await decrementTrackedTagQty(tx, row.productId, row.tagId, row.quantity);
+  }
+
+  await tx.warehouseStockReceipt.delete({ where: { id: row.id } });
+}
+
+router.post("/warehouse-receipts/bulk-delete", checkPermission("inventory.adjust"), async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids is required" });
+
+  try {
+    const rows = await prisma.warehouseStockReceipt.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        warehouseId: true,
+        productId: true,
+        quantity: true,
+        tagId: true,
+      },
+    });
+    if (!rows.length) return res.status(404).json({ error: "No receipts found" });
+
+    for (const r of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      const wh = await warehouseForUserOr404(req, res, String(r.warehouseId));
+      if (!wh) return;
+    }
+
+    await prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await deleteReceiptInTransaction(tx, row);
+      }
+    }, transactionOptions);
+
+    res.json({ deleted: rows.length });
+  } catch (err) {
+    console.error("[POST /purchase/warehouse-receipts/bulk-delete]", err);
+    const status = err.status || 500;
+    if (status >= 500) return res.status(500).json({ error: "Could not delete receipts" });
+    return res.status(status).json({ error: err.message || "Could not delete receipts" });
+  }
+});
+
 /**
  * Delete one warehouse receipt line and reverse its stock impact.
  */
@@ -535,36 +611,7 @@ router.delete(
     try {
       await prisma.$transaction(
         async (tx) => {
-          const wi = await tx.warehouseInventory.findUnique({
-            where: {
-              warehouseId_productId: {
-                warehouseId: row.warehouseId,
-                productId: row.productId,
-              },
-            },
-            select: { quantity: true },
-          });
-          if (!wi || wi.quantity < row.quantity) {
-            const e = new Error("Cannot delete receipt: insufficient warehouse stock to reverse.");
-            e.status = 409;
-            throw e;
-          }
-
-          await tx.warehouseInventory.update({
-            where: {
-              warehouseId_productId: {
-                warehouseId: row.warehouseId,
-                productId: row.productId,
-              },
-            },
-            data: { quantity: { decrement: row.quantity } },
-          });
-
-          if (row.tagId) {
-            await decrementTrackedTagQty(tx, row.productId, row.tagId, row.quantity);
-          }
-
-          await tx.warehouseStockReceipt.delete({ where: { id: row.id } });
+          await deleteReceiptInTransaction(tx, row);
         },
         transactionOptions
       );
