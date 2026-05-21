@@ -6,6 +6,7 @@ import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { usePermissions } from '../../context/PermissionContext'
 import { Plus, Pencil, PowerOff, Boxes } from 'lucide-react'
+import { TableNumberCell } from '../table/TableColumns'
 import { productDisplayName } from '../../utils/productDisplay'
 
 const EMPTY = { name: '', location: '', branchId: '' }
@@ -116,12 +117,13 @@ export default function Warehouses() {
 
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Name</th><th>Location</th><th>Linked Branch</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead><tr><th style={{ width: 44, textAlign: 'center' }}>#</th><th>Name</th><th>Location</th><th>Linked Branch</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={5} />}
-            {!tableLoading && warehouses.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No warehouses yet</td></tr>}
-            {!tableLoading && warehouses.map(w => (
+            {tableLoading && <LoadingRow cols={6} />}
+            {!tableLoading && warehouses.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No warehouses yet</td></tr>}
+            {!tableLoading && warehouses.map((w, idx) => (
               <tr key={w.id}>
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{w.name}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{w.location || '—'}</td>
                 <td>{w.branch ? <span className="badge badge-info">{w.branch.name}</span> : <span style={{ color: 'var(--text-light)' }}>Standalone</span>}</td>

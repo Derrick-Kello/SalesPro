@@ -5,6 +5,10 @@ import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, UserX } from 'lucide-react'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
+import { useAlert } from '../../context/AlertContext'
 
 const EMPTY = { fullName: '', username: '', password: '', role: 'CASHIER', branchId: '' }
 const BUILT_IN_ROLES = [
@@ -15,6 +19,7 @@ const BUILT_IN_ROLES = [
 const ROLE_COLORS = { ADMIN: 'badge-danger', MANAGER: 'badge-warning', CASHIER: 'badge-info' }
 
 export default function Users() {
+  const { showError } = useAlert()
   const [users, setUsers]               = useState([])
   const [branches, setBranches]         = useState([])
   const [customRoles, setCustomRoles]   = useState({})
@@ -81,6 +86,25 @@ export default function Users() {
 
   const getBranchName = (branchId) => branches.find(b => b.id === branchId)?.name || '—'
 
+  const activeUsers = users.filter((u) => u.isActive)
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(activeUsers)
+
+  async function deactivateSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Deactivate ${selectedIds.length} user(s)?`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/users', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk deactivate failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -88,14 +112,38 @@ export default function Users() {
         <button className="btn btn-primary" onClick={openAdd}><Plus size={15} strokeWidth={2.5} /> Add User</button>
       </div>
 
+      <TableBulkBar
+        selectedCount={selectedIds.length}
+        onDelete={deactivateSelected}
+        onClear={clear}
+        deleting={bulkDeleting}
+        entityLabel="user"
+      />
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Full Name</th><th>Username</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <TableSelectHeader
+                checked={allSelected}
+                disabled={tableLoading || activeUsers.length === 0}
+                onChange={toggleAll}
+              />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Full Name</th><th>Username</th><th>Role</th><th>Branch</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={6} />}
-            {!tableLoading && users.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No users found</td></tr>}
-            {!tableLoading && users.map(u => (
+            {tableLoading && <LoadingRow cols={8} />}
+            {!tableLoading && users.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No users found</td></tr>}
+            {!tableLoading && users.map((u, idx) => (
               <tr key={u.id}>
+                {u.isActive ? (
+                  <TableSelectCell checked={selectedIds.includes(u.id)} onChange={(c) => toggle(u.id, c)} />
+                ) : (
+                  <td />
+                )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{u.fullName}</td>
                 <td style={{ fontFamily: 'monospace', fontSize: 13, color: 'var(--text-muted)' }}>{u.username}</td>
                 <td><span className={`badge ${ROLE_COLORS[u.role] || 'badge-warning'}`}>{roleName(u.role)}</span></td>

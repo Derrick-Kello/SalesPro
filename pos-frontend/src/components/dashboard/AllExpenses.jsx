@@ -8,10 +8,15 @@ import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, Trash2, Filter } from 'lucide-react'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
+import { useAlert } from '../../context/AlertContext'
 
 const EMPTY = { title: '', amount: '', categoryId: '', note: '', date: '' }
 
 export default function AllExpenses() {
+  const { showError } = useAlert()
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
   const { fmt } = useCurrency()
@@ -71,6 +76,24 @@ export default function AllExpenses() {
   }
 
   const total = expenses.reduce((s, e) => s + e.amount, 0)
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(expenses)
+  const colCount = showBranchCol ? 9 : 8
+
+  async function deleteSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Delete ${selectedIds.length} expense(s)?`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/expenses', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
 
   return (
     <div>
@@ -96,14 +119,24 @@ export default function AllExpenses() {
         {expenses.length > 0 && <span style={{ marginLeft: 'auto', fontWeight: 700, alignSelf: 'center' }}>Total: {fmt(total)}</span>}
       </div>
 
+      <TableBulkBar selectedCount={selectedIds.length} onDelete={deleteSelected} onClear={clear} deleting={bulkDeleting} />
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Date</th><th>Title</th><th>Category</th>{showBranchCol && <th>Branch</th>}<th>Amount</th><th>Note</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <TableSelectHeader checked={allSelected} disabled={tableLoading || !expenses.length} onChange={toggleAll} />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Date</th><th>Title</th><th>Category</th>{showBranchCol && <th>Branch</th>}<th>Amount</th><th>Note</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={showBranchCol ? 7 : 6} />}
-            {!tableLoading && expenses.length === 0 && <tr><td colSpan={showBranchCol ? 7 : 6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No expenses found</td></tr>}
-            {!tableLoading && expenses.map(e => (
+            {tableLoading && <LoadingRow cols={colCount} />}
+            {!tableLoading && expenses.length === 0 && <tr><td colSpan={colCount} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No expenses found</td></tr>}
+            {!tableLoading && expenses.map((e, idx) => (
               <tr key={e.id}>
+                <TableSelectCell checked={selectedIds.includes(e.id)} onChange={(c) => toggle(e.id, c)} />
+                <TableNumberCell index={idx} />
                 <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{new Date(e.date).toLocaleDateString()}</td>
                 <td style={{ fontWeight: 600 }}>{e.title}</td>
                 <td><span className="badge badge-info">{e.category.name}</span></td>

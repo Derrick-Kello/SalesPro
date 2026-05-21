@@ -5,10 +5,15 @@ import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, PowerOff } from 'lucide-react'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
+import { useAlert } from '../../context/AlertContext'
 
 const EMPTY = { name: '', location: '', phone: '' }
 
 export default function Branches() {
+  const { showError } = useAlert()
   const [branches, setBranches]         = useState([])
   const [modal, setModal]               = useState(false)
   const [form, setForm]                 = useState(EMPTY)
@@ -44,6 +49,25 @@ export default function Branches() {
     await api.delete(`/branches/${id}`); load()
   }
 
+  const activeBranches = branches.filter((b) => b.isActive)
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(activeBranches)
+
+  async function deactivateSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Deactivate ${selectedIds.length} branch(es)?`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/branches', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk deactivate failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -51,14 +75,41 @@ export default function Branches() {
         <button className="btn btn-primary" onClick={openAdd}><Plus size={15} strokeWidth={2.5} /> Add Branch</button>
       </div>
 
+      <TableBulkBar
+        selectedCount={selectedIds.length}
+        onDelete={deactivateSelected}
+        onClear={clear}
+        deleting={bulkDeleting}
+        entityLabel="branch"
+      />
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Name</th><th>Location</th><th>Phone</th><th>Status</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <TableSelectHeader
+                checked={allSelected}
+                disabled={tableLoading || activeBranches.length === 0}
+                onChange={toggleAll}
+              />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Name</th><th>Location</th><th>Phone</th><th>Status</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={5} />}
-            {!tableLoading && branches.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No branches yet</td></tr>}
-            {!tableLoading && branches.map(b => (
+            {tableLoading && <LoadingRow cols={7} />}
+            {!tableLoading && branches.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No branches yet</td></tr>}
+            {!tableLoading && branches.map((b, idx) => (
               <tr key={b.id}>
+                {b.isActive ? (
+                  <TableSelectCell
+                    checked={selectedIds.includes(b.id)}
+                    onChange={(c) => toggle(b.id, c)}
+                  />
+                ) : (
+                  <td />
+                )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{b.name}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{b.location || '—'}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{b.phone || '—'}</td>

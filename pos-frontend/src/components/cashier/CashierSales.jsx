@@ -5,6 +5,7 @@ import { usePermissions } from '../../context/PermissionContext'
 import { useAlert } from '../../context/AlertContext'
 import Modal from '../Modal'
 import { Printer, Filter, Trash2 } from 'lucide-react'
+import { TableNumberCell } from '../table/TableColumns'
 
 const STORE_NAME = 'SalesPro'
 
@@ -178,6 +179,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                   />
                 </th>
               )}
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
               <th>Sale #</th>
               <th>Date</th>
               <th>Cashier</th>
@@ -195,12 +197,12 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={can('sales.delete') ? 14 : 13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
+              <tr><td colSpan={can('sales.delete') ? 15 : 14} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>Loading…</td></tr>
             )}
             {!loading && sales.length === 0 && (
-              <tr><td colSpan={can('sales.delete') ? 14 : 13} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
+              <tr><td colSpan={can('sales.delete') ? 15 : 14} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>
             )}
-            {!loading && sales.map(s => (
+            {!loading && sales.map((s, idx) => (
               <tr key={s.id}>
                 {can('sales.delete') && (
                   <td style={{ textAlign: 'center' }}>
@@ -213,6 +215,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                     />
                   </td>
                 )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
                 <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td>{s.user.fullName}</td>

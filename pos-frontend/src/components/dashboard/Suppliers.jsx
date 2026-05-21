@@ -5,10 +5,15 @@ import { LoadingRow, SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, Trash2, Search } from 'lucide-react'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
+import { useAlert } from '../../context/AlertContext'
 
 const EMPTY = { name: '', phone: '', email: '', address: '', company: '' }
 
 export default function Suppliers() {
+  const { showError } = useAlert()
   const [suppliers, setSuppliers]       = useState([])
   const [search, setSearch]             = useState('')
   const [modal, setModal]               = useState(false)
@@ -53,6 +58,24 @@ export default function Suppliers() {
     (s.phone && s.phone.includes(search))
   )
 
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(filtered)
+
+  async function deleteSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Remove ${selectedIds.length} supplier(s)?`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/suppliers', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -67,14 +90,24 @@ export default function Suppliers() {
         </div>
       </div>
 
+      <TableBulkBar selectedCount={selectedIds.length} onDelete={deleteSelected} onClear={clear} deleting={bulkDeleting} />
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Name</th><th>Company</th><th>Phone</th><th>Email</th><th>Address</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <TableSelectHeader checked={allSelected} disabled={tableLoading || !filtered.length} onChange={toggleAll} />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Name</th><th>Company</th><th>Phone</th><th>Email</th><th>Address</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={6} />}
-            {!tableLoading && filtered.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No suppliers found</td></tr>}
-            {!tableLoading && filtered.map(s => (
+            {tableLoading && <LoadingRow cols={8} />}
+            {!tableLoading && filtered.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No suppliers found</td></tr>}
+            {!tableLoading && filtered.map((s, idx) => (
               <tr key={s.id}>
+                <TableSelectCell checked={selectedIds.includes(s.id)} onChange={(c) => toggle(s.id, c)} />
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{s.name}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.company || '—'}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.phone || '—'}</td>

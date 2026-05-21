@@ -1,18 +1,33 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../../api/client'
 import { useCurrency } from '../../context/CurrencyContext'
 import { useAlert } from '../../context/AlertContext'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
+import { useTableSelection } from '../../hooks/useTableSelection'
 import { LoadingRow } from '../LoadingRow'
+import Modal from '../Modal'
+import {
+  TableBulkBar,
+  TableNumberCell,
+  TableSelectCell,
+  TableSelectHeader,
+} from '../table/TableColumns'
 import { buildMotherGroupKey, getMotherVariantName } from '../../utils/variantGrouping'
-import { MoreVertical } from 'lucide-react'
+import { MoreVertical, Search } from 'lucide-react'
+import PurchaseEditForm from '../purchase/PurchaseEditForm'
+
+function closeActionsMenu(e) {
+  e.target.closest('details')?.removeAttribute('open')
+}
 
 export default function PurchaseHistory() {
   const { fmt } = useCurrency()
   const { showError, showSuccess } = useAlert()
   const [rows, setRows] = useState([])
   const [warehouses, setWarehouses] = useState([])
+  const [suppliers, setSuppliers] = useState([])
+  const [tableSearch, setTableSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [warehouseId, setWarehouseId] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -21,7 +36,9 @@ export default function PurchaseHistory() {
   const [paymentGroup, setPaymentGroup] = useState(null)
   const [editSupplier, setEditSupplier] = useState('')
   const [editNote, setEditNote] = useState('')
-  const [paymentStatus, setPaymentStatus] = useState('UNPAID')
+  const [paymentStatus, setPaymentStatus] = useState('PAID')
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [savingPayment, setSavingPayment] = useState(false)
 
   async function load(silent) {
     if (!silent) setLoading(true)
@@ -31,11 +48,13 @@ export default function PurchaseHistory() {
       if (startDate) params.append('startDate', startDate)
       if (endDate) params.append('endDate', endDate)
       const qs = params.toString() ? `?${params}` : ''
-      const [wh, list] = await Promise.all([
+      const [wh, list, sp] = await Promise.all([
         api.get('/warehouses'),
         api.get(`/purchase/warehouse-receipts${qs}`),
+        api.get('/suppliers'),
       ])
       setWarehouses(wh)
+      setSuppliers(Array.isArray(sp) ? sp : [])
       setRows(Array.isArray(list) ? list : [])
     } catch {
       setRows([])
@@ -95,38 +114,105 @@ export default function PurchaseHistory() {
     return 'MIXED'
   }
 
-  async function deleteGroup(g) {
-    if (!confirm(`Delete ${g.receiptIds.length} receipt line(s) under "${g.motherName}"?`)) return
+  const filteredGroups = useMemo(() => {
+    const q = tableSearch.trim().toLowerCase()
+    if (!q) return groups
+    return groups.filter((g) =>
+      [
+        g.motherName,
+        g.warehouse?.name,
+        g.warehouse?.branchName,
+        g.suppliers.join(' '),
+        groupPaymentState(g),
+      ].some((v) => String(v ?? '').toLowerCase().includes(q))
+    )
+  }, [groups, tableSearch])
+
+  const {
+    selectedIds,
+    setSelectedIds,
+    bulkDeleting,
+    setBulkDeleting,
+    toggle,
+    toggleAll,
+    allSelected,
+    clear,
+  } = useTableSelection(filteredGroups, (g) => g.key)
+
+  function openEditGroup(g, e) {
+    closeActionsMenu(e)
+    setEditGroup(g)
+    setEditSupplier(g.suppliers[0] || g.rows?.[0]?.supplier || '')
+    const firstNote = (g.rows || []).find((r) => r.note)?.note
+    setEditNote(firstNote || '')
+  }
+
+  function openPaymentGroup(g, e) {
+    closeActionsMenu(e)
+    setPaymentGroup(g)
+    const st = groupPaymentState(g)
+    setPaymentStatus(st === 'MIXED' || st === 'UNPAID' ? 'PAID' : st)
+  }
+
+  async function deleteReceiptIds(ids, confirmMsg) {
+    if (!confirm(confirmMsg)) return
     try {
-      for (const id of g.receiptIds) {
-        // eslint-disable-next-line no-await-in-loop
-        await api.delete(`/purchase/warehouse-receipts/${id}`)
-      }
-      showSuccess(`Deleted ${g.receiptIds.length} receipt line(s).`)
-      load()
+      await api.post('/purchase/warehouse-receipts/bulk-delete', { ids })
+      showSuccess(`Deleted ${ids.length} receipt line(s).`)
+      clear()
+      load(true)
     } catch (err) {
-      showError(err.message || 'Could not delete grouped receipts')
+      showError(err.message || 'Could not delete receipts')
+    }
+  }
+
+  async function deleteGroup(g) {
+    await deleteReceiptIds(
+      g.receiptIds,
+      `Delete ${g.receiptIds.length} receipt line(s) under "${g.motherName}"?`
+    )
+  }
+
+  async function deleteSelectedGroups() {
+    const ids = filteredGroups
+      .filter((g) => selectedIds.includes(g.key))
+      .flatMap((g) => g.receiptIds)
+    if (!ids.length) return
+    setBulkDeleting(true)
+    try {
+      await deleteReceiptIds(ids, `Delete ${ids.length} receipt line(s) from selected groups?`)
+    } finally {
+      setBulkDeleting(false)
     }
   }
 
   async function saveGroupEdit() {
     if (!editGroup) return
+    const supplier = editSupplier.trim()
+    if (!supplier) {
+      showError('Supplier is required')
+      return
+    }
+    setSavingEdit(true)
     try {
       await api.patch('/purchase/warehouse-receipts/bulk-edit', {
         ids: editGroup.receiptIds,
-        supplier: editSupplier,
-        note: editNote,
+        supplier,
+        note: editNote.trim(),
       })
       showSuccess('Purchase updated')
       setEditGroup(null)
       load(true)
     } catch (err) {
       showError(err.message || 'Could not update purchase')
+    } finally {
+      setSavingEdit(false)
     }
   }
 
   async function applyPaymentStatus() {
     if (!paymentGroup) return
+    setSavingPayment(true)
     try {
       await api.post('/purchase/warehouse-receipts/bulk-payment', {
         ids: paymentGroup.receiptIds,
@@ -137,10 +223,13 @@ export default function PurchaseHistory() {
       load(true)
     } catch (err) {
       showError(err.message || 'Could not update payment status')
+    } finally {
+      setSavingPayment(false)
     }
   }
 
-  async function returnGroup(g) {
+  async function returnGroup(g, e) {
+    closeActionsMenu(e)
     if (!confirm(`Create purchase return for "${g.motherName}"?`)) return
     try {
       await api.post('/purchase/warehouse-receipts/bulk-return', {
@@ -153,6 +242,8 @@ export default function PurchaseHistory() {
       showError(err.message || 'Could not process return')
     }
   }
+
+  const colCount = 11
 
   return (
     <div>
@@ -190,10 +281,46 @@ export default function PurchaseHistory() {
         </div>
       </form>
 
+      <TableBulkBar
+        selectedCount={selectedIds.length}
+        onDelete={deleteSelectedGroups}
+        onClear={clear}
+        deleting={bulkDeleting}
+        entityLabel="group"
+      />
+
+      <div className="search-bar" style={{ marginBottom: 12 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <Search
+            size={15}
+            style={{
+              position: 'absolute',
+              left: 12,
+              top: '50%',
+              transform: 'translateY(-50%)',
+              color: 'var(--text-light)',
+              pointerEvents: 'none',
+            }}
+          />
+          <input
+            value={tableSearch}
+            onChange={(e) => setTableSearch(e.target.value)}
+            placeholder="Search mother variant, warehouse, supplier, status…"
+            style={{ paddingLeft: 36, width: '100%' }}
+          />
+        </div>
+      </div>
+
       <div className="table-container" style={{ minHeight: 420, paddingBottom: 120 }}>
         <table className="data-table">
           <thead>
             <tr>
+              <TableSelectHeader
+                checked={allSelected}
+                disabled={loading || filteredGroups.length === 0}
+                onChange={toggleAll}
+              />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
               <th>Date</th>
               <th>Warehouse</th>
               <th>Outlet</th>
@@ -206,16 +333,23 @@ export default function PurchaseHistory() {
             </tr>
           </thead>
           <tbody>
-            {loading && <LoadingRow cols={9} />}
-            {!loading && groups.length === 0 && (
+            {loading && <LoadingRow cols={colCount} />}
+            {!loading && filteredGroups.length === 0 && (
               <tr>
-                <td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '36px 0' }}>
-                  No receipts yet — use Purchase → Receive to warehouse.
+                <td colSpan={colCount} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '36px 0' }}>
+                  {groups.length === 0
+                    ? 'No receipts yet — use Purchase → Receive to warehouse.'
+                    : 'No groups match your search.'}
                 </td>
               </tr>
             )}
-            {!loading && groups.map((g) => (
+            {!loading && filteredGroups.map((g, idx) => (
               <tr key={g.key}>
+                <TableSelectCell
+                  checked={selectedIds.includes(g.key)}
+                  onChange={(checked) => toggle(g.key, checked)}
+                />
+                <TableNumberCell index={idx} />
                 <td style={{ fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
                   {g.latestAt ? new Date(g.latestAt).toLocaleString() : '—'}
                 </td>
@@ -266,33 +400,20 @@ export default function PurchaseHistory() {
                       <Link
                         className="btn btn-sm btn-outline"
                         to={`/dashboard/purchase-history/details?warehouseId=${encodeURIComponent(String(g.warehouse?.id || ''))}&mother=${encodeURIComponent(g.motherName)}&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`}
+                        onClick={closeActionsMenu}
                       >
                         Details
                       </Link>
-                      <button
-                        className="btn btn-sm btn-outline"
-                        onClick={() => {
-                          setEditGroup(g)
-                          setEditSupplier(g.suppliers[0] || '')
-                          setEditNote('')
-                        }}
-                      >
+                      <button type="button" className="btn btn-sm btn-outline" onClick={(e) => openEditGroup(g, e)}>
                         Edit Purchase
                       </button>
-                      <button className="btn btn-sm btn-outline" onClick={() => returnGroup(g)}>
+                      <button type="button" className="btn btn-sm btn-outline" onClick={(e) => returnGroup(g, e)}>
                         Purchase Return
                       </button>
-                      <button
-                        className="btn btn-sm btn-outline"
-                        onClick={() => {
-                          setPaymentGroup(g)
-                          const st = groupPaymentState(g)
-                          setPaymentStatus(st === 'MIXED' ? 'UNPAID' : st)
-                        }}
-                      >
+                      <button type="button" className="btn btn-sm btn-outline" onClick={(e) => openPaymentGroup(g, e)}>
                         Create Payment
                       </button>
-                      <button className="btn btn-sm btn-danger" onClick={() => deleteGroup(g)}>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={(e) => { closeActionsMenu(e); deleteGroup(g) }}>
                         Delete Purchase
                       </button>
                     </div>
@@ -305,41 +426,61 @@ export default function PurchaseHistory() {
       </div>
 
       {editGroup && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
-          <h4 style={{ marginBottom: 8 }}>Edit Purchase — {editGroup.motherName}</h4>
-          <div className="form-row">
-            <div className="form-group">
-              <label>Supplier</label>
-              <input value={editSupplier} onChange={(e) => setEditSupplier(e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label>Note</label>
-              <input value={editNote} onChange={(e) => setEditNote(e.target.value)} placeholder="Optional note" />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline" onClick={() => setEditGroup(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={saveGroupEdit}>Save</button>
-          </div>
-        </div>
+        <Modal
+          title={`Edit Purchase — ${editGroup.motherName}`}
+          onClose={() => !savingEdit && setEditGroup(null)}
+          footer={
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => setEditGroup(null)} disabled={savingEdit}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={saveGroupEdit} disabled={savingEdit}>
+                {savingEdit ? 'Saving…' : 'Save'}
+              </button>
+            </>
+          }
+        >
+          <PurchaseEditForm
+            receipts={editGroup.rows || []}
+            supplier={editSupplier}
+            onSupplierChange={setEditSupplier}
+            note={editNote}
+            onNoteChange={setEditNote}
+            suppliers={suppliers}
+          />
+          <p style={{ marginTop: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
+            Updates supplier and note on {editGroup.receiptIds.length} receipt line(s).
+          </p>
+        </Modal>
       )}
 
       {paymentGroup && (
-        <div className="card" style={{ marginTop: 14, padding: 14 }}>
-          <h4 style={{ marginBottom: 8 }}>Create Payment — {paymentGroup.motherName}</h4>
-          <div className="form-group">
-            <label>Status</label>
+        <Modal
+          title={`Create Payment — ${paymentGroup.motherName}`}
+          onClose={() => !savingPayment && setPaymentGroup(null)}
+          footer={
+            <>
+              <button type="button" className="btn btn-outline" onClick={() => setPaymentGroup(null)} disabled={savingPayment}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn-primary" onClick={applyPaymentStatus} disabled={savingPayment}>
+                {savingPayment ? 'Applying…' : 'Record payment'}
+              </button>
+            </>
+          }
+        >
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label>Payment status</label>
             <select value={paymentStatus} onChange={(e) => setPaymentStatus(e.target.value)}>
               <option value="UNPAID">Unpaid</option>
               <option value="PARTIAL">Partial</option>
               <option value="PAID">Paid</option>
             </select>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline" onClick={() => setPaymentGroup(null)}>Cancel</button>
-            <button className="btn btn-primary" onClick={applyPaymentStatus}>Apply</button>
-          </div>
-        </div>
+          <p style={{ marginTop: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
+            Applies to {paymentGroup.receiptIds.length} receipt line(s).
+          </p>
+        </Modal>
       )}
     </div>
   )

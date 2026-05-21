@@ -6,6 +6,9 @@ import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAlert } from '../../context/AlertContext'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
 
 export default function ExpenseCategories() {
   const { showError } = useAlert()
@@ -40,6 +43,27 @@ export default function ExpenseCategories() {
     try { await api.delete(`/expenses/categories/${id}`); load() } catch (err) { showError(err.message) }
   }
 
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(categories)
+
+  async function deleteSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Delete ${selectedIds.length} categor(ies)?`)) return
+    setBulkDeleting(true)
+    try {
+      for (const id of selectedIds) {
+        // eslint-disable-next-line no-await-in-loop
+        await api.delete(`/expenses/categories/${id}`)
+      }
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -47,14 +71,24 @@ export default function ExpenseCategories() {
         <button className="btn btn-primary" onClick={() => { setName(''); setEditId(null); setSaveError(''); setModal(true) }}><Plus size={15} strokeWidth={2.5} /> Add Category</button>
       </div>
 
+      <TableBulkBar selectedCount={selectedIds.length} onDelete={deleteSelected} onClear={clear} deleting={bulkDeleting} entityLabel="category" />
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Category Name</th><th>Created</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              <TableSelectHeader checked={allSelected} disabled={tableLoading || !categories.length} onChange={toggleAll} />
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Category Name</th><th>Created</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={3} />}
-            {!tableLoading && categories.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No categories yet</td></tr>}
-            {!tableLoading && categories.map(c => (
+            {tableLoading && <LoadingRow cols={5} />}
+            {!tableLoading && categories.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No categories yet</td></tr>}
+            {!tableLoading && categories.map((c, idx) => (
               <tr key={c.id}>
+                <TableSelectCell checked={selectedIds.includes(c.id)} onChange={(v) => toggle(c.id, v)} />
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
                 <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(c.createdAt).toLocaleDateString()}</td>
                 <td>

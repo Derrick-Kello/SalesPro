@@ -8,6 +8,9 @@ import { useAlert } from '../../context/AlertContext'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, History, Search, Trash2 } from 'lucide-react'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
 
 const EMPTY = { name: '', phone: '', email: '', address: '' }
 
@@ -66,6 +69,31 @@ export default function Customers() {
     (c.email && c.email.toLowerCase().includes(search.toLowerCase()))
   )
 
+  const {
+    selectedIds,
+    bulkDeleting,
+    setBulkDeleting,
+    toggle,
+    toggleAll,
+    allSelected,
+    clear,
+  } = useTableSelection(filtered)
+
+  async function deleteSelectedCustomers() {
+    if (!selectedIds.length) return
+    if (!confirm(`Delete ${selectedIds.length} customer(s)? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/customers', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -80,14 +108,42 @@ export default function Customers() {
         </div>
       </div>
 
+      {can('customers.delete') && (
+        <TableBulkBar
+          selectedCount={selectedIds.length}
+          onDelete={deleteSelectedCustomers}
+          onClear={clear}
+          deleting={bulkDeleting}
+        />
+      )}
+
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Loyalty Points</th><th>Actions</th></tr></thead>
+          <thead>
+            <tr>
+              {can('customers.delete') && (
+                <TableSelectHeader
+                  checked={allSelected}
+                  disabled={tableLoading || filtered.length === 0}
+                  onChange={toggleAll}
+                />
+              )}
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Name</th><th>Phone</th><th>Email</th><th>Loyalty Points</th><th>Actions</th>
+            </tr>
+          </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={5} />}
-            {!tableLoading && filtered.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No customers found</td></tr>}
-            {!tableLoading && filtered.map(c => (
+            {tableLoading && <LoadingRow cols={can('customers.delete') ? 7 : 6} />}
+            {!tableLoading && filtered.length === 0 && <tr><td colSpan={can('customers.delete') ? 7 : 6} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No customers found</td></tr>}
+            {!tableLoading && filtered.map((c, idx) => (
               <tr key={c.id}>
+                {can('customers.delete') && (
+                  <TableSelectCell
+                    checked={selectedIds.includes(c.id)}
+                    onChange={(checked) => toggle(c.id, checked)}
+                  />
+                )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{c.phone || '—'}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{c.email || '—'}</td>
@@ -134,18 +190,19 @@ export default function Customers() {
             </div>
           </div>
           <table className="report-table">
-            <thead><tr><th>Sale #</th><th>Date</th><th>Total</th><th>Payment</th></tr></thead>
+            <thead><tr><th style={{ width: 44, textAlign: 'center' }}>#</th><th>Sale #</th><th>Date</th><th>Total</th><th>Payment</th></tr></thead>
             <tbody>
               {history.sales?.length
-                ? history.sales.map(s => (
+                ? history.sales.map((s, idx) => (
                     <tr key={s.id}>
+                      <TableNumberCell index={idx} />
                       <td style={{ fontFamily: 'monospace' }}>#{s.id}</td>
                       <td>{new Date(s.createdAt).toLocaleDateString()}</td>
                       <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
                       <td>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                     </tr>
                   ))
-                : <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No purchases yet</td></tr>}
+                : <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>No purchases yet</td></tr>}
             </tbody>
           </table>
         </Modal>

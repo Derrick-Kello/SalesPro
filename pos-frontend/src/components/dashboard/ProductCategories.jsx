@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
+import { TableNumberCell } from '../table/TableColumns'
 
 export default function ProductCategories() {
   const [categories, setCategories] = useState([])
@@ -25,13 +26,14 @@ export default function ProductCategories() {
       <div className="section-header"><h2>Product Categories</h2></div>
       <div className="table-container">
         <table className="data-table">
-          <thead><tr><th>Category</th><th>Products</th><th>Total Stock</th></tr></thead>
+          <thead><tr><th style={{ width: 44, textAlign: 'center' }}>#</th><th>Category</th><th>Products</th><th>Total Stock</th></tr></thead>
           <tbody>
             {categories.length === 0 && (
-              <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No categories found</td></tr>
+              <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No categories found</td></tr>
             )}
-            {categories.map(c => (
+            {categories.map((c, idx) => (
               <tr key={c.name}>
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}><span className="badge badge-info">{c.name}</span></td>
                 <td>{c.count}</td>
                 <td>{c.totalStock}</td>

@@ -14,6 +14,9 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { productDisplayName } from '../../utils/productDisplay'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
 
 function downloadCsv(filename, csvText) {
   const bom = '\uFEFF'
@@ -426,6 +429,26 @@ export default function Products({ mode = 'all' }) {
     )
   })
 
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(filtered)
+
+  async function removeSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Remove ${selectedIds.length} product(s)?`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/products', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  const tableCols = (canEdit ? 10 : 8)
+
   return (
     <div>
       <div className="section-header">
@@ -479,22 +502,43 @@ export default function Products({ mode = 'all' }) {
         </div>
       </div>
 
+      {canEdit && (
+        <TableBulkBar
+          selectedCount={selectedIds.length}
+          onDelete={removeSelected}
+          onClear={clear}
+          deleting={bulkDeleting}
+          entityLabel="product"
+        />
+      )}
+
       <div className="table-container">
         <table className="data-table">
           <thead>
             <tr>
-              <th>ID</th><th>Name</th><th>Category</th><th>Tags</th><th>Cost Price</th><th>Selling Price</th><th>Barcode</th><th>Stock</th>
+              {canEdit && (
+                <TableSelectHeader
+                  checked={allSelected}
+                  disabled={tableLoading || !filtered.length}
+                  onChange={toggleAll}
+                />
+              )}
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Name</th><th>Category</th><th>Tags</th><th>Cost Price</th><th>Selling Price</th><th>Barcode</th><th>Stock</th>
               {canEdit && <th>Actions</th>}
             </tr>
           </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={canEdit ? 9 : 8} />}
+            {tableLoading && <LoadingRow cols={tableCols} />}
             {!tableLoading && filtered.length === 0 && (
-              <tr><td colSpan={canEdit ? 9 : 8} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No products found</td></tr>
+              <tr><td colSpan={tableCols} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No products found</td></tr>
             )}
-            {!tableLoading && filtered.map(p => (
+            {!tableLoading && filtered.map((p, idx) => (
               <tr key={p.id}>
-                <td style={{ color: 'var(--text-muted)', fontFamily: 'monospace' }}>#{p.id}</td>
+                {canEdit && (
+                  <TableSelectCell checked={selectedIds.includes(p.id)} onChange={(c) => toggle(p.id, c)} />
+                )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
                 <td><span className="badge badge-info">{p.category}</span></td>
                 <td style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 200 }}>

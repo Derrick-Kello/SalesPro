@@ -9,6 +9,9 @@ import { usePermissions } from '../../context/PermissionContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import { useAlert } from '../../context/AlertContext'
 import { productDisplayName } from '../../utils/productDisplay'
+import { useTableSelection } from '../../hooks/useTableSelection'
+import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { bulkDeleteLoop } from '../../utils/bulkDelete'
 
 const EMPTY = {
   productId: '',
@@ -147,6 +150,25 @@ export default function Transfers() {
       : t.toBranch?.name || '—'
   }
 
+  const { selectedIds, bulkDeleting, setBulkDeleting, toggle, toggleAll, allSelected, clear } =
+    useTableSelection(transfers)
+  const colCount = canDelete ? 13 : 11
+
+  async function deleteSelected() {
+    if (!selectedIds.length) return
+    if (!confirm(`Delete ${selectedIds.length} transfer(s)? Inventory will be reversed.`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteLoop(api, '/transfers', selectedIds)
+      clear()
+      load()
+    } catch (err) {
+      showError(err.message || 'Bulk delete failed')
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
   return (
     <div>
       <div className="section-header">
@@ -156,10 +178,18 @@ export default function Transfers() {
         </button>
       </div>
 
+      {canDelete && (
+        <TableBulkBar selectedCount={selectedIds.length} onDelete={deleteSelected} onClear={clear} deleting={bulkDeleting} />
+      )}
+
       <div className="table-container">
         <table className="data-table">
           <thead>
             <tr>
+              {canDelete && (
+                <TableSelectHeader checked={allSelected} disabled={tableLoading || !transfers.length} onChange={toggleAll} />
+              )}
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
               <th>Date</th><th>Product</th><th>Qty</th>
               <th>Cost Price</th><th>Unit Price</th><th>Total Value</th>
               <th>From</th><th>To</th><th>By</th><th>Note</th>
@@ -167,12 +197,16 @@ export default function Transfers() {
             </tr>
           </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={canDelete ? 11 : 10} />}
+            {tableLoading && <LoadingRow cols={colCount} />}
             {!tableLoading && transfers.length === 0 && (
-              <tr><td colSpan={canDelete ? 11 : 10} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No transfers yet</td></tr>
+              <tr><td colSpan={colCount} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No transfers yet</td></tr>
             )}
-            {!tableLoading && transfers.map(t => (
+            {!tableLoading && transfers.map((t, idx) => (
               <tr key={t.id}>
+                {canDelete && (
+                  <TableSelectCell checked={selectedIds.includes(t.id)} onChange={(c) => toggle(t.id, c)} />
+                )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{new Date(t.createdAt).toLocaleString()}</td>
                 <td style={{ fontWeight: 600 }}>{t.product ? productDisplayName(t.product) : '—'}</td>
                 <td style={{ fontWeight: 700 }}>{t.quantity}</td>

@@ -10,6 +10,7 @@ import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { useAuth } from '../../context/AuthContext'
 import { useAlert } from '../../context/AlertContext'
 import { Eye, Filter, Trash2, Pencil } from 'lucide-react'
+import { TableNumberCell } from '../table/TableColumns'
 
 export default function SalesHistory() {
   const { user } = useAuth()
@@ -195,7 +196,8 @@ export default function SalesHistory() {
                   />
                 </th>
               )}
-              <th>ID</th>
+              <th style={{ width: 44, textAlign: 'center' }}>#</th>
+              <th>Sale #</th>
               <th>Date</th>
               <th>Cashier</th>
               <th>Customer</th>
@@ -212,9 +214,9 @@ export default function SalesHistory() {
             </tr>
           </thead>
           <tbody>
-            {tableLoading && <LoadingRow cols={can('sales.delete') ? 15 : 14} />}
-            {!tableLoading && sales.length === 0 && <tr><td colSpan={can('sales.delete') ? 15 : 14} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>}
-            {!tableLoading && sales.map(s => (
+            {tableLoading && <LoadingRow cols={can('sales.delete') ? 16 : 15} />}
+            {!tableLoading && sales.length === 0 && <tr><td colSpan={can('sales.delete') ? 16 : 15} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No sales found</td></tr>}
+            {!tableLoading && sales.map((s, idx) => (
               <tr key={s.id}>
                 {can('sales.delete') && (
                   <td style={{ textAlign: 'center' }}>
@@ -227,6 +229,7 @@ export default function SalesHistory() {
                     />
                   </td>
                 )}
+                <TableNumberCell index={idx} />
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{new Date(s.createdAt).toLocaleString()}</td>
                 <td>{s.user.fullName}</td>
