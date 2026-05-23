@@ -14,6 +14,12 @@ import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
 import { productDisplayName } from '../../utils/productDisplay'
+import {
+  parseVariantProductName,
+  variantProductName,
+  productNameExists,
+  normalizeProductNameKey,
+} from '../../utils/productNames'
 import { useTableSelection } from '../../hooks/useTableSelection'
 import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
 import { bulkDeleteLoop } from '../../utils/bulkDelete'
@@ -163,23 +169,27 @@ export default function Products({ mode = 'all' }) {
   function openAdd() { setForm(EMPTY); setEditId(null); setSaveError(''); setModal(true) }
 
   function openEdit(p) {
+    const { base, variantLabel } = parseVariantProductName(p.name)
+    const chips = variantLabel
+      ? [{ name: variantLabel, quantity: null }]
+      : (p.tags || []).length
+        ? dedupeTagsForSave(
+            (p.tags || []).map((t) => ({
+              name: String(t.name ?? '').trim(),
+              quantity:
+                t.quantity != null && Number.isFinite(Number(t.quantity))
+                  ? Number(t.quantity)
+                  : null,
+            })).filter((c) => c.name),
+          )
+        : []
     setForm({
-      name: p.name,
+      name: base || p.name,
       category: p.category,
       price: p.price,
       costPrice: p.costPrice != null ? p.costPrice : '',
       barcode: p.barcode || '', description: p.description || '',
-      tagChips: (p.tags || []).length
-        ? dedupeTagsForSave(
-          (p.tags || []).map((t) => ({
-            name: String(t.name ?? '').trim(),
-            quantity:
-              t.quantity != null && Number.isFinite(Number(t.quantity))
-                ? Number(t.quantity)
-                : null,
-          })).filter((c) => c.name),
-        )
-        : [],
+      tagChips: chips,
       tagDraft: '',
     })
     setEditId(p.id); setSaveError(''); setModal(true)
@@ -222,11 +232,30 @@ export default function Products({ mode = 'all' }) {
     }))
   }
 
+  async function createVariantProducts(baseBody, baseName, tags, skipKeys = new Set()) {
+    const createdNames = new Set()
+    for (const t of tags) {
+      const variantName = variantProductName(baseName, t.name)
+      const key = normalizeProductNameKey(variantName)
+      if (createdNames.has(key) || skipKeys.has(key)) continue
+      if (productNameExists(products, variantName)) {
+        throw new Error(`Product "${variantName}" already exists`)
+      }
+      createdNames.add(key)
+      await api.post('/products', {
+        ...baseBody,
+        name: variantName,
+        barcode: null,
+        tags: [],
+      })
+    }
+  }
+
   async function save() {
     if (!form.name || !form.category || !form.price || form.costPrice === '' || form.costPrice === undefined) { setSaveError('Name, category, selling price, and cost price are required'); return }
     const tags = buildTagsPayload()
+    const baseName = form.name.trim()
     const baseBody = {
-      name: form.name,
       category: form.category,
       price: form.price,
       costPrice: form.costPrice,
@@ -235,24 +264,29 @@ export default function Products({ mode = 'all' }) {
     }
     await runSave(async () => {
       if (editId) {
-        await api.put(`/products/${editId}`, { ...baseBody, tags })
-      } else if (tags.length) {
-        // Creation tags are treated as top-level variants, each becoming its own product.
-        const createdNames = new Set()
-        for (const t of tags) {
-          const variantName = `${form.name} (${t.name})`
-          const key = variantName.toLowerCase()
-          if (createdNames.has(key)) continue
-          createdNames.add(key)
-          await api.post('/products', {
-            ...baseBody,
-            name: variantName,
-            barcode: null,
-            tags: [],
-          })
+        const primaryName =
+          tags.length > 0 ? variantProductName(baseName, tags[0].name) : baseName
+        if (productNameExists(products, primaryName, editId)) {
+          throw new Error(`Product "${primaryName}" already exists`)
         }
+        await api.put(`/products/${editId}`, {
+          ...baseBody,
+          name: primaryName,
+          tags: [],
+        })
+        for (const t of tags) {
+          const vName = variantProductName(baseName, t.name)
+          if (normalizeProductNameKey(vName) === normalizeProductNameKey(primaryName)) continue
+          if (productNameExists(products, vName)) continue
+          await api.post('/products', { ...baseBody, name: vName, barcode: null, tags: [] })
+        }
+      } else if (tags.length) {
+        await createVariantProducts(baseBody, baseName, tags)
       } else {
-        await api.post('/products', { ...baseBody, tags: [] })
+        if (productNameExists(products, baseName)) {
+          throw new Error(`Product "${baseName}" already exists`)
+        }
+        await api.post('/products', { ...baseBody, name: baseName, tags: [] })
       }
       setModal(false); load()
     })
@@ -347,6 +381,7 @@ export default function Products({ mode = 'all' }) {
         const rows = XLSX.utils.sheet_to_json(ws)
         let imported = 0, skipped = 0
         const skipNotes = []
+        const existingKeys = new Set(products.map((p) => normalizeProductNameKey(p.name)))
         for (const row of rows) {
           const r = normalizeSpreadsheetRow(row)
           const name = r.name
@@ -387,10 +422,15 @@ export default function Products({ mode = 'all' }) {
             if (tagsPayload.length) {
               const createdNames = new Set()
               for (const t of tagsPayload) {
-                const variantName = `${name} (${t.name})`
-                const key = variantName.toLowerCase()
-                if (createdNames.has(key)) continue
+                const variantName = variantProductName(name, t.name)
+                const key = normalizeProductNameKey(variantName)
+                if (createdNames.has(key) || existingKeys.has(key)) {
+                  skipNotes.push(`duplicate variant "${variantName}"`)
+                  skipped++
+                  continue
+                }
                 createdNames.add(key)
+                existingKeys.add(key)
                 await api.post('/products', {
                   ...basePayload,
                   name: variantName,
@@ -400,8 +440,15 @@ export default function Products({ mode = 'all' }) {
                 imported++
               }
             } else {
-              await api.post('/products', { ...basePayload, tags: [] })
-              imported++
+              const nameKey = normalizeProductNameKey(name)
+              if (existingKeys.has(nameKey)) {
+                skipNotes.push(`"${name}" already exists`)
+                skipped++
+              } else {
+                await api.post('/products', { ...basePayload, tags: [] })
+                existingKeys.add(nameKey)
+                imported++
+              }
             }
           } catch { skipped++ }
         }
@@ -606,9 +653,9 @@ export default function Products({ mode = 'all' }) {
           <div className="form-group">
             <label>Tags</label>
             <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 0 8px', lineHeight: 1.4 }}>
-              Type a variant, then <strong>comma</strong>—it becomes a chip. On create, each chip becomes its own
-              product (e.g. <code style={{ fontSize: 11 }}>Jeans (Black)</code>,{' '}
-              <code style={{ fontSize: 11 }}>Jeans (Blue)</code>).
+              Type a variant, then <strong>comma</strong>—it becomes a chip. Each chip becomes its own product
+              (e.g. <code style={{ fontSize: 11 }}>Jeans (Black)</code>). On edit, new chips create missing
+              variants; duplicates are skipped.
             </p>
             <div
               style={{

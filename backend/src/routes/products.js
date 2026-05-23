@@ -5,6 +5,7 @@ const prisma = require("../prisma/client");
 const transactionOptions = require("../prisma/transactionOptions");
 const { authenticate, authorize, checkPermission } = require("../middleware/auth");
 const { syncProductTags } = require("../utils/tagHelpers");
+const { assertUniqueProductName } = require("../utils/productNames");
 
 function sanitizeBranchIds(branchIds) {
   if (!Array.isArray(branchIds)) return [];
@@ -194,6 +195,7 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create
 
   try {
     const product = await prisma.$transaction(async (tx) => {
+      await assertUniqueProductName(tx, nameTrim);
       const p = await tx.product.create({
         data: {
           name: nameTrim,
@@ -232,7 +234,11 @@ router.post("/", authorize("ADMIN", "MANAGER"), checkPermission("products.create
         ? tgt.includes("barcode") || tgt.some((x) => String(x).includes("barcode"))
         : typeof tgt === "string" && tgt.includes("barcode");
       return res.status(409).json({
-        error: isBarcode ? "A product with that barcode already exists" : "Unique constraint violation",
+        error: isBarcode
+          ? "A product with that barcode already exists"
+          : err.message?.includes("already exists")
+            ? err.message
+            : "A product with that name already exists",
       });
     }
     res.status(500).json({
@@ -289,6 +295,7 @@ router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.edit
         const bids = sanitizeBranchIds(branchIds);
         data.branches = { set: bids.map((bid) => ({ id: bid })) };
       }
+      await assertUniqueProductName(tx, nameTrim, id);
       await tx.product.update({ where: { id }, data });
       if (tags !== undefined) {
         await syncProductTags(tx, id, tags);
@@ -307,7 +314,11 @@ router.put("/:id", authorize("ADMIN", "MANAGER"), checkPermission("products.edit
         ? tgt.includes("barcode") || tgt.some((x) => String(x).includes("barcode"))
         : typeof tgt === "string" && tgt.includes("barcode");
       return res.status(409).json({
-        error: isBarcode ? "A product with that barcode already exists" : "Unique constraint violation",
+        error: isBarcode
+          ? "A product with that barcode already exists"
+          : err.message?.includes("already exists")
+            ? err.message
+            : "A product with that name already exists",
       });
     }
     res.status(500).json({

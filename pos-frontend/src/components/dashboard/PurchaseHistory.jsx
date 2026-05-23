@@ -15,7 +15,7 @@ import {
 } from '../table/TableColumns'
 import { buildMotherGroupKey, getMotherVariantName } from '../../utils/variantGrouping'
 import { MoreVertical, Search } from 'lucide-react'
-import PurchaseEditForm from '../purchase/PurchaseEditForm'
+import PurchaseEditForm, { lineFromReceipt } from '../purchase/PurchaseEditForm'
 
 function closeActionsMenu(e) {
   e.target.closest('details')?.removeAttribute('open')
@@ -27,6 +27,8 @@ export default function PurchaseHistory() {
   const [rows, setRows] = useState([])
   const [warehouses, setWarehouses] = useState([])
   const [suppliers, setSuppliers] = useState([])
+  const [products, setProducts] = useState([])
+  const [editLineEdits, setEditLineEdits] = useState([])
   const [tableSearch, setTableSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [warehouseId, setWarehouseId] = useState('')
@@ -34,30 +36,35 @@ export default function PurchaseHistory() {
   const [endDate, setEndDate] = useState('')
   const [editGroup, setEditGroup] = useState(null)
   const [paymentGroup, setPaymentGroup] = useState(null)
-  const [editSupplier, setEditSupplier] = useState('')
-  const [editNote, setEditNote] = useState('')
   const [paymentStatus, setPaymentStatus] = useState('PAID')
   const [savingEdit, setSavingEdit] = useState(false)
   const [savingPayment, setSavingPayment] = useState(false)
 
   async function load(silent) {
     if (!silent) setLoading(true)
+    const params = new URLSearchParams()
+    if (warehouseId) params.append('warehouseId', warehouseId)
+    if (startDate) params.append('startDate', startDate)
+    if (endDate) params.append('endDate', endDate)
+    const qs = params.toString() ? `?${params}` : ''
     try {
-      const params = new URLSearchParams()
-      if (warehouseId) params.append('warehouseId', warehouseId)
-      if (startDate) params.append('startDate', startDate)
-      if (endDate) params.append('endDate', endDate)
-      const qs = params.toString() ? `?${params}` : ''
-      const [wh, list, sp] = await Promise.all([
-        api.get('/warehouses'),
-        api.get(`/purchase/warehouse-receipts${qs}`),
-        api.get('/suppliers'),
-      ])
-      setWarehouses(wh)
-      setSuppliers(Array.isArray(sp) ? sp : [])
+      const list = await api.get(`/purchase/warehouse-receipts${qs}`)
       setRows(Array.isArray(list) ? list : [])
-    } catch {
+    } catch (err) {
       setRows([])
+      showError(err.message || 'Could not load purchase receipts')
+    }
+    try {
+      const [wh, sp, pr] = await Promise.all([
+        api.get('/warehouses').catch(() => []),
+        api.get('/suppliers').catch(() => []),
+        api.get('/products').catch(() => []),
+      ])
+      setWarehouses(Array.isArray(wh) ? wh : [])
+      setSuppliers(Array.isArray(sp) ? sp : [])
+      setProducts(Array.isArray(pr) ? pr : [])
+    } catch {
+      /* receipts already loaded; filters/edit helpers are optional */
     } finally {
       if (!silent) setLoading(false)
     }
@@ -100,9 +107,13 @@ export default function PurchaseHistory() {
     if (r.supplier) g.supplierSet.add(r.supplier)
     if (r.createdAt && (!g.latestAt || new Date(r.createdAt) > new Date(g.latestAt))) g.latestAt = r.createdAt
   }
-  const groups = [...groupsMap.values()]
-    .map((g) => ({ ...g, suppliers: [...g.supplierSet] }))
-    .sort((a, b) => new Date(b.latestAt || 0) - new Date(a.latestAt || 0))
+  const groups = useMemo(
+    () =>
+      [...groupsMap.values()]
+        .map((g) => ({ ...g, suppliers: [...g.supplierSet] }))
+        .sort((a, b) => new Date(b.latestAt || 0) - new Date(a.latestAt || 0)),
+    [rows]
+  )
 
   function groupPaymentState(g) {
     const set = new Set(
@@ -142,9 +153,13 @@ export default function PurchaseHistory() {
   function openEditGroup(g, e) {
     closeActionsMenu(e)
     setEditGroup(g)
-    setEditSupplier(g.suppliers[0] || g.rows?.[0]?.supplier || '')
-    const firstNote = (g.rows || []).find((r) => r.note)?.note
-    setEditNote(firstNote || '')
+    setEditLineEdits((g.rows || []).map(lineFromReceipt))
+  }
+
+  function onEditLineChange(idx, field, value) {
+    setEditLineEdits((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row))
+    )
   }
 
   function openPaymentGroup(g, e) {
@@ -187,21 +202,34 @@ export default function PurchaseHistory() {
   }
 
   async function saveGroupEdit() {
-    if (!editGroup) return
-    const supplier = editSupplier.trim()
-    if (!supplier) {
-      showError('Supplier is required')
-      return
+    if (!editGroup || !editLineEdits.length) return
+    for (const ed of editLineEdits) {
+      if (!ed.supplier?.trim()) {
+        showError('Supplier is required on every line')
+        return
+      }
+      if (!ed.warehouseId || !ed.productId || !ed.quantity || parseInt(ed.quantity, 10) <= 0) {
+        showError('Warehouse, product, and quantity are required on every line')
+        return
+      }
     }
     setSavingEdit(true)
     try {
       await api.patch('/purchase/warehouse-receipts/bulk-edit', {
-        ids: editGroup.receiptIds,
-        supplier,
-        note: editNote.trim(),
+        lines: editLineEdits.map((ed) => ({
+          id: parseInt(ed.id, 10),
+          warehouseId: parseInt(ed.warehouseId, 10),
+          productId: parseInt(ed.productId, 10),
+          quantity: parseInt(ed.quantity, 10),
+          supplier: ed.supplier.trim(),
+          note: ed.note?.trim() || '',
+          paymentStatus: ed.paymentStatus,
+          tagName: ed.tagName?.trim() || '',
+        })),
       })
       showSuccess('Purchase updated')
       setEditGroup(null)
+      setEditLineEdits([])
       load(true)
     } catch (err) {
       showError(err.message || 'Could not update purchase')
@@ -427,11 +455,22 @@ export default function PurchaseHistory() {
 
       {editGroup && (
         <Modal
+          size="lg"
           title={`Edit Purchase — ${editGroup.motherName}`}
-          onClose={() => !savingEdit && setEditGroup(null)}
+          onClose={() => {
+            if (!savingEdit) {
+              setEditGroup(null)
+              setEditLineEdits([])
+            }
+          }}
           footer={
             <>
-              <button type="button" className="btn btn-outline" onClick={() => setEditGroup(null)} disabled={savingEdit}>
+              <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => { setEditGroup(null); setEditLineEdits([]) }}
+                disabled={savingEdit}
+              >
                 Cancel
               </button>
               <button type="button" className="btn btn-primary" onClick={saveGroupEdit} disabled={savingEdit}>
@@ -442,15 +481,12 @@ export default function PurchaseHistory() {
         >
           <PurchaseEditForm
             receipts={editGroup.rows || []}
-            supplier={editSupplier}
-            onSupplierChange={setEditSupplier}
-            note={editNote}
-            onNoteChange={setEditNote}
+            lineEdits={editLineEdits}
+            onLineChange={onEditLineChange}
+            warehouses={warehouses}
+            products={products}
             suppliers={suppliers}
           />
-          <p style={{ marginTop: 12, fontSize: 12.5, color: 'var(--text-muted)' }}>
-            Updates supplier and note on {editGroup.receiptIds.length} receipt line(s).
-          </p>
         </Modal>
       )}
 

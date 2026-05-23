@@ -1,101 +1,159 @@
-import { useCurrency } from '../../context/CurrencyContext'
+import { useMemo } from 'react'
+import { productDisplayName } from '../../utils/productDisplay'
 
-/**
- * Fields editable after receive: supplier, note (same as Purchase → Receive).
- * Quantity, product, warehouse, unit cost, and payment are fixed at receive time.
- */
+const PAYMENT_OPTS = ['UNPAID', 'PARTIAL', 'PAID']
+
+function lineFromReceipt(r) {
+  return {
+    id: r.id,
+    warehouseId: String(r.warehouseId ?? r.warehouse?.id ?? ''),
+    productId: String(r.productId ?? r.product?.id ?? ''),
+    quantity: String(r.quantity ?? ''),
+    supplier: r.supplier || '',
+    note: r.note || '',
+    paymentStatus: String(r.paymentStatus || (r.isPaid ? 'PAID' : 'UNPAID')).toUpperCase(),
+    tagName: r.tag?.name || '',
+  }
+}
+
+/** Full receipt editor — same fields as Purchase → Receive. */
 export default function PurchaseEditForm({
   receipts = [],
-  supplier,
-  onSupplierChange,
-  note,
-  onNoteChange,
+  lineEdits,
+  onLineChange,
+  warehouses = [],
+  products = [],
   suppliers = [],
 }) {
-  const { fmt } = useCurrency()
   const list = Array.isArray(receipts) ? receipts : []
+  const edits = lineEdits || list.map(lineFromReceipt)
+
+  const activeProducts = useMemo(
+    () => products.filter((p) => p.isActive !== false),
+    [products]
+  )
+
+  if (!list.length) {
+    return <p style={{ color: 'var(--text-muted)' }}>No receipt lines selected.</p>
+  }
 
   return (
-    <>
-      <div
-        style={{
-          marginBottom: 16,
-          padding: 12,
-          borderRadius: 10,
-          background: 'var(--surface2)',
-          border: '1px solid var(--border)',
-          fontSize: 13,
-          lineHeight: 1.45,
-        }}
-      >
-        <div style={{ fontWeight: 600, marginBottom: 8 }}>Recorded at receive (not editable here)</div>
-        <p style={{ color: 'var(--text-muted)', margin: '0 0 10px' }}>
-          Warehouse, product, quantity, unit cost, and payment status are set when stock is received.
-          Use <strong>Create Payment</strong> to change payment status.
-        </p>
-        <div className="table-container" style={{ maxHeight: 160, overflowY: 'auto', boxShadow: 'none' }}>
-          <table className="data-table" style={{ fontSize: 12.5 }}>
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th style={{ textAlign: 'right' }}>Qty</th>
-                <th style={{ textAlign: 'right' }}>Unit cost</th>
-                <th style={{ textAlign: 'right' }}>Line value</th>
-                <th>Payment</th>
-              </tr>
-            </thead>
-            <tbody>
-              {list.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.product?.name ?? `#${r.productId}`}</td>
-                  <td style={{ textAlign: 'right' }}>{r.quantity}</td>
-                  <td style={{ textAlign: 'right' }}>{fmt(r.unitCostSnapshot ?? 0)}</td>
-                  <td style={{ textAlign: 'right' }}>{fmt(r.lineValueTotal ?? 0)}</td>
-                  <td>
-                    <span className="badge badge-info">
-                      {String(r.paymentStatus || (r.isPaid ? 'PAID' : 'UNPAID')).toUpperCase()}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {list[0]?.warehouse?.name && (
-          <p style={{ margin: '10px 0 0', color: 'var(--text-muted)', fontSize: 12.5 }}>
-            Warehouse: <strong style={{ color: 'var(--text)' }}>{list[0].warehouse.name}</strong>
-          </p>
-        )}
-      </div>
-
-      <div className="form-group">
-        <label>Supplier *</label>
-        {suppliers.length > 0 ? (
-          <select value={supplier} onChange={(e) => onSupplierChange(e.target.value)}>
-            <option value="">Select supplier</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.name}>
-                {s.name}
-                {s.company ? ` · ${s.company}` : ''}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            value={supplier}
-            onChange={(e) => onSupplierChange(e.target.value)}
-            placeholder="Supplier name"
-          />
-        )}
-      </div>
-      <div className="form-group" style={{ marginBottom: 0 }}>
-        <label>Note</label>
-        <input
-          value={note}
-          onChange={(e) => onNoteChange(e.target.value)}
-          placeholder="Optional note (same as on receive form)"
-        />
-      </div>
-    </>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {list.map((r, idx) => {
+        const ed = edits[idx] || lineFromReceipt(r)
+        return (
+          <div
+            key={r.id}
+            className="card"
+            style={{ padding: 14, borderRadius: 10, border: '1px solid var(--border)' }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 10, fontSize: 13 }}>
+              Line #{r.id}
+              {r.product?.name ? ` · ${r.product.name}` : ''}
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Warehouse *</label>
+                <select
+                  value={ed.warehouseId}
+                  onChange={(e) => onLineChange(idx, 'warehouseId', e.target.value)}
+                >
+                  <option value="">Select warehouse</option>
+                  {warehouses.filter((w) => w.isActive !== false).map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                      {w.branch?.name ? ` · ${w.branch.name}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Product *</label>
+                <select
+                  value={ed.productId}
+                  onChange={(e) => onLineChange(idx, 'productId', e.target.value)}
+                >
+                  <option value="">Select product</option>
+                  {activeProducts.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      #{p.id} · {productDisplayName(p)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Quantity *</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={ed.quantity}
+                  onChange={(e) => onLineChange(idx, 'quantity', e.target.value)}
+                />
+              </div>
+              <div className="form-group">
+                <label>Payment status</label>
+                <select
+                  value={ed.paymentStatus}
+                  onChange={(e) => onLineChange(idx, 'paymentStatus', e.target.value)}
+                >
+                  {PAYMENT_OPTS.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label>Supplier *</label>
+                {suppliers.length > 0 ? (
+                  <select
+                    value={ed.supplier}
+                    onChange={(e) => onLineChange(idx, 'supplier', e.target.value)}
+                  >
+                    <option value="">Select supplier</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={ed.supplier}
+                    onChange={(e) => onLineChange(idx, 'supplier', e.target.value)}
+                  />
+                )}
+              </div>
+              <div className="form-group">
+                <label>Tag (optional)</label>
+                <input
+                  value={ed.tagName}
+                  onChange={(e) => onLineChange(idx, 'tagName', e.target.value)}
+                  placeholder="Size / colour label"
+                />
+              </div>
+            </div>
+            <div className="form-group" style={{ marginBottom: 0 }}>
+              <label>Note</label>
+              <input
+                value={ed.note}
+                onChange={(e) => onLineChange(idx, 'note', e.target.value)}
+                placeholder="Optional note"
+              />
+            </div>
+            <p style={{ margin: '10px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+              Unit cost is taken from the product at save time. Changing warehouse, product, or quantity
+              adjusts warehouse stock automatically.
+            </p>
+          </div>
+        )
+      })}
+    </div>
   )
 }
+
+export { lineFromReceipt }

@@ -14,7 +14,7 @@ import {
 } from '../components/table/TableColumns'
 import { getMotherVariantName, normalizeMotherName } from '../utils/variantGrouping'
 import { MoreVertical, Search } from 'lucide-react'
-import PurchaseEditForm from '../components/purchase/PurchaseEditForm'
+import PurchaseEditForm, { lineFromReceipt } from '../components/purchase/PurchaseEditForm'
 
 function closeActionsMenu(e) {
   e.target.closest('details')?.removeAttribute('open')
@@ -29,8 +29,9 @@ export default function PurchaseMotherDetailsPage() {
   const [tableSearch, setTableSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [editRow, setEditRow] = useState(null)
-  const [editSupplier, setEditSupplier] = useState('')
-  const [editNote, setEditNote] = useState('')
+  const [editLineEdits, setEditLineEdits] = useState([])
+  const [warehouses, setWarehouses] = useState([])
+  const [products, setProducts] = useState([])
   const [paymentRow, setPaymentRow] = useState(null)
   const [paymentStatus, setPaymentStatus] = useState('PAID')
   const [savingEdit, setSavingEdit] = useState(false)
@@ -48,14 +49,18 @@ export default function PurchaseMotherDetailsPage() {
       if (warehouseId) qs.set('warehouseId', warehouseId)
       if (startDate) qs.set('startDate', startDate)
       if (endDate) qs.set('endDate', endDate)
-      const [list, sp] = await Promise.all([
-        api.get(`/purchase/warehouse-receipts${qs.toString() ? `?${qs}` : ''}`),
-        api.get('/suppliers'),
-      ])
+      const list = await api.get(`/purchase/warehouse-receipts${qs.toString() ? `?${qs}` : ''}`)
       const needle = normalizeMotherName(mother)
       const filtered = (Array.isArray(list) ? list : []).filter((r) => normalizeMotherName(r?.product?.name) === needle)
       setRows(filtered)
+      const [sp, wh, pr] = await Promise.all([
+        api.get('/suppliers').catch(() => []),
+        api.get('/warehouses').catch(() => []),
+        api.get('/products').catch(() => []),
+      ])
       setSuppliers(Array.isArray(sp) ? sp : [])
+      setWarehouses(Array.isArray(wh) ? wh : [])
+      setProducts(Array.isArray(pr) ? pr : [])
     } catch (err) {
       showError(err.message || 'Could not load variant details')
       setRows([])
@@ -171,26 +176,45 @@ export default function PurchaseMotherDetailsPage() {
   function openEdit(row, e) {
     closeActionsMenu(e)
     setEditRow(row)
-    setEditSupplier(row.supplier || '')
-    setEditNote(row.note || '')
+    setEditLineEdits([lineFromReceipt(row)])
+  }
+
+  function onEditLineChange(idx, field, value) {
+    setEditLineEdits((prev) =>
+      prev.map((line, i) => (i === idx ? { ...line, [field]: value } : line))
+    )
   }
 
   async function saveEditRow() {
-    if (!editRow) return
-    const supplier = editSupplier.trim()
-    if (!supplier) {
+    if (!editRow || !editLineEdits[0]) return
+    const ed = editLineEdits[0]
+    if (!ed.supplier?.trim()) {
       showError('Supplier is required')
+      return
+    }
+    if (!ed.warehouseId || !ed.productId || !ed.quantity || parseInt(ed.quantity, 10) <= 0) {
+      showError('Warehouse, product, and quantity are required')
       return
     }
     setSavingEdit(true)
     try {
       await api.patch('/purchase/warehouse-receipts/bulk-edit', {
-        ids: [editRow.id],
-        supplier,
-        note: editNote.trim(),
+        lines: [
+          {
+            id: parseInt(ed.id, 10),
+            warehouseId: parseInt(ed.warehouseId, 10),
+            productId: parseInt(ed.productId, 10),
+            quantity: parseInt(ed.quantity, 10),
+            supplier: ed.supplier.trim(),
+            note: ed.note?.trim() || '',
+            paymentStatus: ed.paymentStatus,
+            tagName: ed.tagName?.trim() || '',
+          },
+        ],
       })
       showSuccess('Purchase updated')
       setEditRow(null)
+      setEditLineEdits([])
       load()
     } catch (err) {
       showError(err.message || 'Could not update line')
@@ -340,11 +364,24 @@ export default function PurchaseMotherDetailsPage() {
 
         {editRow && (
           <Modal
+            size="lg"
             title={`Edit line — ${editRow.product?.name || editRow.id}`}
-            onClose={() => !savingEdit && setEditRow(null)}
+            onClose={() => {
+              if (!savingEdit) {
+                setEditRow(null)
+                setEditLineEdits([])
+              }
+            }}
             footer={
               <>
-                <button type="button" className="btn btn-outline" onClick={() => setEditRow(null)} disabled={savingEdit}>Cancel</button>
+                <button
+                type="button"
+                className="btn btn-outline"
+                onClick={() => { setEditRow(null); setEditLineEdits([]) }}
+                disabled={savingEdit}
+              >
+                Cancel
+              </button>
                 <button type="button" className="btn btn-primary" onClick={saveEditRow} disabled={savingEdit}>
                   {savingEdit ? 'Saving…' : 'Save'}
                 </button>
@@ -352,11 +389,11 @@ export default function PurchaseMotherDetailsPage() {
             }
           >
             <PurchaseEditForm
-              receipts={editRow ? [editRow] : []}
-              supplier={editSupplier}
-              onSupplierChange={setEditSupplier}
-              note={editNote}
-              onNoteChange={setEditNote}
+              receipts={[editRow]}
+              lineEdits={editLineEdits}
+              onLineChange={onEditLineChange}
+              warehouses={warehouses}
+              products={products}
               suppliers={suppliers}
             />
           </Modal>
