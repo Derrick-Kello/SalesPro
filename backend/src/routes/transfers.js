@@ -13,145 +13,181 @@ class ClientTransferError extends Error {
   }
 }
 
-router.post("/", checkPermission("transfers.create"), async (req, res) => {
-  const { productId, quantity, fromBranchId, fromWarehouseId, toBranchId, toWarehouseId, note } =
-    req.body;
+const transferInclude = {
+  product: { select: { name: true, variant: true, costPrice: true, price: true } },
+  fromBranch: { select: { name: true } },
+  toBranch: { select: { name: true } },
+  fromWarehouse: { select: { name: true } },
+  toWarehouse: { select: { name: true } },
+  transferredBy: { select: { fullName: true } },
+};
 
-  const pid = parseInt(productId, 10);
-  const qty = parseInt(quantity, 10);
-  if (!Number.isFinite(pid) || !productId) {
-    return res.status(400).json({ error: "productId is required" });
-  }
-  if (!Number.isFinite(qty) || qty <= 0) {
-    return res.status(400).json({ error: "quantity must be a positive integer" });
-  }
-
+function parseTransferLocations(body) {
   const fromBr =
-    fromBranchId != null && fromBranchId !== "" ? parseInt(fromBranchId, 10) : null;
+    body.fromBranchId != null && body.fromBranchId !== "" ? parseInt(body.fromBranchId, 10) : null;
   const fromWh =
-    fromWarehouseId != null && fromWarehouseId !== "" ? parseInt(fromWarehouseId, 10) : null;
-  const toBr = toBranchId != null && toBranchId !== "" ? parseInt(toBranchId, 10) : null;
-  const toWh = toWarehouseId != null && toWarehouseId !== "" ? parseInt(toWarehouseId, 10) : null;
+    body.fromWarehouseId != null && body.fromWarehouseId !== ""
+      ? parseInt(body.fromWarehouseId, 10)
+      : null;
+  const toBr = body.toBranchId != null && body.toBranchId !== "" ? parseInt(body.toBranchId, 10) : null;
+  const toWh =
+    body.toWarehouseId != null && body.toWarehouseId !== "" ? parseInt(body.toWarehouseId, 10) : null;
 
   const hasFromBr = Number.isFinite(fromBr);
   const hasFromWh = Number.isFinite(fromWh);
   if ((hasFromBr && hasFromWh) || (!hasFromBr && !hasFromWh)) {
-    return res.status(400).json({
-      error:
+    throw new ClientTransferError({
+      message:
         "Exactly one source location is required — choose either branch stock or warehouse stock (not both).",
     });
   }
   const hasToBr = Number.isFinite(toBr);
   const hasToWh = Number.isFinite(toWh);
   if ((hasToBr && hasToWh) || (!hasToBr && !hasToWh)) {
-    return res.status(400).json({
-      error:
+    throw new ClientTransferError({
+      message:
         "Exactly one destination location is required — choose either branch or warehouse (not both).",
     });
   }
   if (hasFromWh && hasToWh && fromWh === toWh) {
-    return res.status(400).json({ error: "Source and destination cannot be the same warehouse" });
+    throw new ClientTransferError({ message: "Source and destination cannot be the same warehouse" });
   }
   if (hasFromBr && hasToBr && fromBr === toBr) {
-    return res.status(400).json({ error: "Source and destination branches must be different" });
+    throw new ClientTransferError({ message: "Source and destination branches must be different" });
   }
 
-  try {
-    const product = await prisma.product.findUnique({ where: { id: pid } });
-    if (!product) return res.status(404).json({ error: "Product not found" });
-    if (!product.isActive) return res.status(400).json({ error: "Cannot transfer an inactive product" });
+  return { fromBr, fromWh, toBr, toWh, hasFromBr, hasFromWh, hasToBr, hasToWh };
+}
 
-    const transferCostPrice = product.costPrice || 0;
-    const transferUnitPrice = product.price || 0;
-    const transferTotalValue = transferCostPrice * qty;
+async function executeTransferInTransaction(
+  tx,
+  {
+    productId,
+    quantity,
+    fromBr,
+    fromWh,
+    toBr,
+    toWh,
+    hasFromBr,
+    hasFromWh,
+    hasToBr,
+    hasToWh,
+    note,
+    transferredById,
+  }
+) {
+  const pid = parseInt(productId, 10);
+  const qty = parseInt(quantity, 10);
+  if (!Number.isFinite(pid) || pid <= 0) {
+    throw new ClientTransferError({ message: "productId is required" });
+  }
+  if (!Number.isFinite(qty) || qty <= 0) {
+    throw new ClientTransferError({ message: "quantity must be a positive integer" });
+  }
 
-    const transfer = await prisma.$transaction(
-      async (tx) => {
-        if (hasFromWh) {
-          const wi = await tx.warehouseInventory.findUnique({
-            where: { warehouseId_productId: { warehouseId: fromWh, productId: pid } },
-          });
-          const available = wi?.quantity ?? 0;
-          if (!wi || wi.quantity < qty) {
-            throw new ClientTransferError({
-              message: `Insufficient warehouse stock for ${product.name}. Available: ${available}.`,
-            });
-          }
-          await tx.warehouseInventory.update({
-            where: { warehouseId_productId: { warehouseId: fromWh, productId: pid } },
-            data: { quantity: { decrement: qty } },
-          });
-        } else {
-          const branchId = fromBr;
-          let bi = await tx.branchInventory.findUnique({
-            where: { branchId_productId: { branchId, productId: pid } },
-          });
-          if (!bi) {
-            const globalInv = await tx.inventory.findUnique({ where: { productId: pid } });
-            if (!globalInv || globalInv.quantity < qty) {
-              throw new ClientTransferError({
-                message: `Insufficient stock for ${product.name} at the source branch.`,
-              });
-            }
-            bi = await tx.branchInventory.create({
-              data: { branchId, productId: pid, quantity: globalInv.quantity },
-            });
-          }
-          if (bi.quantity < qty) {
-            throw new ClientTransferError({
-              message: `Insufficient branch stock for ${product.name}. Available: ${bi.quantity}.`,
-            });
-          }
-          await tx.branchInventory.update({
-            where: { branchId_productId: { branchId, productId: pid } },
-            data: { quantity: { decrement: qty } },
-          });
-        }
+  const product = await tx.product.findUnique({ where: { id: pid } });
+  if (!product) throw new ClientTransferError({ http: 404, message: "Product not found" });
+  if (!product.isActive) {
+    throw new ClientTransferError({ message: `Cannot transfer inactive product: ${product.name}` });
+  }
 
-        if (hasToWh) {
-          await tx.warehouseInventory.upsert({
-            where: {
-              warehouseId_productId: { warehouseId: toWh, productId: pid },
-            },
-            update: { quantity: { increment: qty } },
-            create: { warehouseId: toWh, productId: pid, quantity: qty },
-          });
-        } else {
-          await tx.branchInventory.upsert({
-            where: { branchId_productId: { branchId: toBr, productId: pid } },
-            update: { quantity: { increment: qty } },
-            create: { branchId: toBr, productId: pid, quantity: qty },
-          });
-          await tx.product.update({
-            where: { id: pid },
-            data: { branches: { connect: { id: toBr } } },
-          }).catch(() => {});
-        }
+  const transferCostPrice = product.costPrice || 0;
+  const transferUnitPrice = product.price || 0;
+  const transferTotalValue = transferCostPrice * qty;
 
-        return tx.stockTransfer.create({
-          data: {
-            productId: pid,
-            quantity: qty,
-            costPrice: transferCostPrice,
-            unitPrice: transferUnitPrice,
-            totalValue: transferTotalValue,
-            fromBranchId: hasFromBr ? fromBr : null,
-            fromWarehouseId: hasFromWh ? fromWh : null,
-            toBranchId: hasToBr ? toBr : null,
-            toWarehouseId: hasToWh ? toWh : null,
-            transferredById: req.user.id,
-            note,
-          },
-          include: {
-            product: { select: { name: true, variant: true, costPrice: true, price: true } },
-            fromBranch: { select: { name: true } },
-            toBranch: { select: { name: true } },
-            fromWarehouse: { select: { name: true } },
-            toWarehouse: { select: { name: true } },
-            transferredBy: { select: { fullName: true } },
-          },
+  if (hasFromWh) {
+    const wi = await tx.warehouseInventory.findUnique({
+      where: { warehouseId_productId: { warehouseId: fromWh, productId: pid } },
+    });
+    const available = wi?.quantity ?? 0;
+    if (!wi || wi.quantity < qty) {
+      throw new ClientTransferError({
+        message: `Insufficient warehouse stock for ${product.name}. Available: ${available}.`,
+      });
+    }
+    await tx.warehouseInventory.update({
+      where: { warehouseId_productId: { warehouseId: fromWh, productId: pid } },
+      data: { quantity: { decrement: qty } },
+    });
+  } else {
+    const branchId = fromBr;
+    let bi = await tx.branchInventory.findUnique({
+      where: { branchId_productId: { branchId, productId: pid } },
+    });
+    if (!bi) {
+      const globalInv = await tx.inventory.findUnique({ where: { productId: pid } });
+      if (!globalInv || globalInv.quantity < qty) {
+        throw new ClientTransferError({
+          message: `Insufficient stock for ${product.name} at the source branch.`,
         });
+      }
+      bi = await tx.branchInventory.create({
+        data: { branchId, productId: pid, quantity: globalInv.quantity },
+      });
+    }
+    if (bi.quantity < qty) {
+      throw new ClientTransferError({
+        message: `Insufficient branch stock for ${product.name}. Available: ${bi.quantity}.`,
+      });
+    }
+    await tx.branchInventory.update({
+      where: { branchId_productId: { branchId, productId: pid } },
+      data: { quantity: { decrement: qty } },
+    });
+  }
+
+  if (hasToWh) {
+    await tx.warehouseInventory.upsert({
+      where: {
+        warehouseId_productId: { warehouseId: toWh, productId: pid },
       },
+      update: { quantity: { increment: qty } },
+      create: { warehouseId: toWh, productId: pid, quantity: qty },
+    });
+  } else {
+    await tx.branchInventory.upsert({
+      where: { branchId_productId: { branchId: toBr, productId: pid } },
+      update: { quantity: { increment: qty } },
+      create: { branchId: toBr, productId: pid, quantity: qty },
+    });
+    await tx.product
+      .update({
+        where: { id: pid },
+        data: { branches: { connect: { id: toBr } } },
+      })
+      .catch(() => {});
+  }
+
+  return tx.stockTransfer.create({
+    data: {
+      productId: pid,
+      quantity: qty,
+      costPrice: transferCostPrice,
+      unitPrice: transferUnitPrice,
+      totalValue: transferTotalValue,
+      fromBranchId: hasFromBr ? fromBr : null,
+      fromWarehouseId: hasFromWh ? fromWh : null,
+      toBranchId: hasToBr ? toBr : null,
+      toWarehouseId: hasToWh ? toWh : null,
+      transferredById,
+      note,
+    },
+    include: transferInclude,
+  });
+}
+
+router.post("/", checkPermission("transfers.create"), async (req, res) => {
+  try {
+    const locations = parseTransferLocations(req.body);
+    const transfer = await prisma.$transaction(
+      async (tx) =>
+        executeTransferInTransaction(tx, {
+          productId: req.body.productId,
+          quantity: req.body.quantity,
+          ...locations,
+          note: req.body.note || null,
+          transferredById: req.user.id,
+        }),
       transactionOptions
     );
 
@@ -165,17 +201,62 @@ router.post("/", checkPermission("transfers.create"), async (req, res) => {
   }
 });
 
+router.post("/bulk", checkPermission("transfers.create"), async (req, res) => {
+  const lines = Array.isArray(req.body?.lines) ? req.body.lines : [];
+  if (!lines.length) {
+    return res.status(400).json({ error: "lines must be a non-empty array" });
+  }
+
+  try {
+    const locations = parseTransferLocations(req.body);
+    const note = req.body.note != null ? String(req.body.note).trim() || null : null;
+
+    const transfers = await prisma.$transaction(
+      async (tx) => {
+        const created = [];
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const lineNum = i + 1;
+          const pid = parseInt(line?.productId, 10);
+          const qty = parseInt(line?.quantity, 10);
+          if (!Number.isFinite(pid) || pid <= 0) {
+            throw new ClientTransferError({ message: `Line ${lineNum}: product is required` });
+          }
+          if (!Number.isFinite(qty) || qty <= 0) {
+            throw new ClientTransferError({
+              message: `Line ${lineNum}: quantity must be a positive integer`,
+            });
+          }
+          // eslint-disable-next-line no-await-in-loop
+          created.push(
+            await executeTransferInTransaction(tx, {
+              productId: pid,
+              quantity: qty,
+              ...locations,
+              note,
+              transferredById: req.user.id,
+            })
+          );
+        }
+        return created;
+      },
+      transactionOptions
+    );
+
+    res.status(201).json({ created: transfers.length, transfers });
+  } catch (err) {
+    if (err instanceof ClientTransferError) {
+      return res.status(err.http ?? 400).json({ error: err.message });
+    }
+    console.error(err);
+    res.status(500).json({ error: "Bulk transfer failed" });
+  }
+});
+
 router.get("/", async (req, res) => {
   try {
     const transfers = await prisma.stockTransfer.findMany({
-      include: {
-        product: { select: { name: true, variant: true, costPrice: true, price: true } },
-        fromBranch: { select: { name: true } },
-        toBranch: { select: { name: true } },
-        fromWarehouse: { select: { name: true } },
-        toWarehouse: { select: { name: true } },
-        transferredBy: { select: { fullName: true } },
-      },
+      include: transferInclude,
       orderBy: { createdAt: "desc" },
     });
     res.json(transfers);
