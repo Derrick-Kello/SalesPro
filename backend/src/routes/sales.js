@@ -20,6 +20,29 @@ function roundMoney(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
+/** POS may charge above catalog; product.price in DB is unchanged. */
+function resolveSaleLinePricing(item, product) {
+  const catalog = roundMoney(product.price || 0);
+  const raw = item?.unitPrice;
+  if (raw == null || raw === "") {
+    return { unitPrice: catalog, catalogUnitPrice: catalog };
+  }
+  const requested = roundMoney(parseFloat(raw));
+  if (!Number.isFinite(requested)) {
+    const err = new Error("Invalid unit price on a line item");
+    err.status = 400;
+    throw err;
+  }
+  if (requested + 1e-6 < catalog) {
+    const err = new Error(
+      `Selling price for ${product.name} cannot be below the catalog price (${catalog})`
+    );
+    err.status = 400;
+    throw err;
+  }
+  return { unitPrice: requested, catalogUnitPrice: catalog };
+}
+
 /** Augment API JSON with paid/balance (amountPaid = cumulative toward invoice). */
 function augmentSaleJson(sale) {
   if (!sale) return sale;
@@ -247,16 +270,19 @@ router.post("/", async (req, res) => {
       const qty = parseInt(item.quantity, 10);
       const tagParsed =
         item.tagId != null && item.tagId !== "" ? parseInt(item.tagId, 10) : null;
-      const subtotal = product.price * qty;
+      const { unitPrice, catalogUnitPrice } = resolveSaleLinePricing(item, product);
+      const subtotal = roundMoney(unitPrice * qty);
       totalAmount += subtotal;
       return {
         productId: item.productId,
         tagId: Number.isFinite(tagParsed) ? tagParsed : null,
         quantity: qty,
-        unitPrice: product.price,
+        unitPrice,
+        catalogUnitPrice,
         subtotal,
       };
     });
+    totalAmount = roundMoney(totalAmount);
 
     const discountAmount = parseFloat(discount) || 0;
     const taxAmount = parseFloat(tax) || 0;
@@ -399,6 +425,59 @@ router.post("/", async (req, res) => {
     }
     console.error(err);
     res.status(500).json({ error: "Sale processing failed" });
+  }
+});
+
+// Admin: correct sale date/time on record (does not change line prices or totals)
+router.patch("/:id", authorize("ADMIN"), async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) {
+    return res.status(400).json({ error: "Invalid sale id" });
+  }
+
+  const raw = req.body?.createdAt;
+  if (raw == null || String(raw).trim() === "") {
+    return res.status(400).json({ error: "createdAt is required" });
+  }
+  const createdAt = new Date(raw);
+  if (Number.isNaN(createdAt.getTime())) {
+    return res.status(400).json({ error: "Invalid date" });
+  }
+  const now = new Date();
+  if (createdAt > now) {
+    return res.status(400).json({ error: "Sale date cannot be in the future" });
+  }
+  const min = new Date("2000-01-01T00:00:00.000Z");
+  if (createdAt < min) {
+    return res.status(400).json({ error: "Sale date is too far in the past" });
+  }
+
+  try {
+    const existing = await prisma.sale.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: "Sale not found" });
+
+    await prisma.sale.update({ where: { id }, data: { createdAt } });
+
+    const updated = await prisma.sale.findUnique({
+      where: { id },
+      include: {
+        user: { select: { fullName: true, username: true } },
+        customer: { select: { name: true, phone: true, email: true } },
+        branch: { select: { name: true } },
+        payment: true,
+        saleItems: {
+          include: {
+            product: { select: { id: true, name: true, price: true, category: true, barcode: true } },
+            tag: { select: { id: true, name: true, group: true } },
+          },
+        },
+      },
+    });
+    res.json(augmentSaleJson(updated));
+    invalidate("overview-stats");
+  } catch (err) {
+    console.error("[PATCH /sales/:id]", err.message);
+    res.status(500).json({ error: "Could not update sale" });
   }
 });
 

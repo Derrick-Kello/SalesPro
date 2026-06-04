@@ -299,6 +299,7 @@ model SaleItem {
   tagId     Int?
   quantity  Int
   unitPrice Float
+  catalogUnitPrice Float?
   subtotal  Float
 
   sale    Sale    @relation(fields: [saleId], references: [id])
