@@ -407,18 +407,39 @@ export default function Register() {
     return Number(p?.price) || 0
   }
 
-  function updateLineUnitPrice(productId, tagId, raw) {
+  function resolvedLineUnitPrice(item, draftText) {
+    const catalog = catalogForCartLine(item)
+    const draft = draftText !== undefined ? draftText : item.unitPriceDraft
+    if (draft !== undefined) {
+      const d = String(draft).trim()
+      if (d === '' || d === '.') return catalog
+      const n = parseFloat(d)
+      return Number.isFinite(n) ? Math.max(catalog, n) : catalog
+    }
+    return Number(item.unitPrice) || catalog
+  }
+
+  function updateLineUnitPriceDraft(productId, tagId, raw) {
     setCart((prev) =>
       prev.map((i) => {
         if (!lineMatches(i, productId, tagId)) return i
-        const catalog = catalogForCartLine(i)
-        const parsed = parseFloat(raw)
-        const unitPrice = Number.isFinite(parsed) ? Math.max(catalog, parsed) : catalog
+        const unitPrice = resolvedLineUnitPrice(i, raw)
         return {
           ...i,
-          unitPrice,
+          unitPriceDraft: raw,
           subtotal: i.quantity * unitPrice,
         }
+      }),
+    )
+  }
+
+  function commitLineUnitPrice(productId, tagId) {
+    setCart((prev) =>
+      prev.map((i) => {
+        if (!lineMatches(i, productId, tagId)) return i
+        const unitPrice = resolvedLineUnitPrice(i)
+        const { unitPriceDraft: _draft, ...rest } = i
+        return { ...rest, unitPrice, subtotal: i.quantity * unitPrice }
       }),
     )
   }
@@ -427,7 +448,7 @@ export default function Register() {
     return cart.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
-      unitPrice: i.unitPrice,
+      unitPrice: resolvedLineUnitPrice(i),
       ...(i.tagId != null && Number.isFinite(Number(i.tagId)) ? { tagId: i.tagId } : {}),
     }))
   }
@@ -773,7 +794,10 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             )
             : cart.map((item) => {
               const catalog = catalogForCartLine(item)
-              const markedUp = item.unitPrice > catalog + 0.009
+              const effectivePrice = resolvedLineUnitPrice(item)
+              const markedUp = effectivePrice > catalog + 0.009
+              const priceInputValue =
+                item.unitPriceDraft !== undefined ? item.unitPriceDraft : String(item.unitPrice)
               return (
               <div
                 key={`${item.productId}-${item.tagId ?? 'x'}`}
@@ -794,17 +818,17 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                       List {fmt(catalog)}
                     </span>
                     <input
-                      type="number"
-                      min={catalog}
-                      step="0.01"
-                      value={item.unitPrice}
-                      onChange={(e) => updateLineUnitPrice(item.productId, item.tagId, e.target.value)}
+                      type="text"
+                      inputMode="decimal"
+                      value={priceInputValue}
+                      onChange={(e) => updateLineUnitPriceDraft(item.productId, item.tagId, e.target.value)}
+                      onBlur={() => commitLineUnitPrice(item.productId, item.tagId)}
                       title="Charge price for this sale (cannot go below list price)"
                       aria-label={`Selling price for ${item.name}`}
                     />
                     {markedUp && (
                       <span className="cart-line-markup-badge" title="Price increased for this sale only">
-                        +{fmt(item.unitPrice - catalog)}
+                        +{fmt(effectivePrice - catalog)}
                       </span>
                     )}
                   </div>
