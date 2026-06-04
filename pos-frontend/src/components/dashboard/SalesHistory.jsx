@@ -9,8 +9,9 @@ import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { useAuth } from '../../context/AuthContext'
 import { useAlert } from '../../context/AlertContext'
-import { Eye, Filter, Trash2, Pencil } from 'lucide-react'
+import { Eye, Filter, Trash2, Pencil, Calendar } from 'lucide-react'
 import { TableNumberCell } from '../table/TableColumns'
+import { catalogUnitPriceForLine, saleHasMarkup, saleLineHasMarkup } from '../../utils/salePricing'
 
 export default function SalesHistory() {
   const { user } = useAuth()
@@ -30,6 +31,9 @@ export default function SalesHistory() {
   const [editOpen, setEditOpen]        = useState(false)
   const [editAddition, setEditAddition]= useState('')
   const [editSaving, setEditSaving]    = useState(false)
+  const [dateEditOpen, setDateEditOpen] = useState(false)
+  const [editSaleDate, setEditSaleDate] = useState('')
+  const [dateEditSaving, setDateEditSaving] = useState(false)
   const [selectedIds, setSelectedIds]  = useState(() => ([]))
   const [bulkDeleting, setBulkDeleting]= useState(false)
 
@@ -119,6 +123,46 @@ export default function SalesHistory() {
       setEditAddition('')
       setEditOpen(true)
     } catch (_) { showError('Could not load sale') }
+  }
+
+  function toDatetimeLocalValue(iso) {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ''
+    const pad = (n) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  async function openDateEdit(row) {
+    try {
+      const fresh = await api.get(`/sales/${row.id}`)
+      setDetail(fresh)
+      setEditSaleDate(toDatetimeLocalValue(fresh.createdAt))
+      setDateEditOpen(true)
+    } catch {
+      showError('Could not load sale')
+    }
+  }
+
+  async function saveSaleDate() {
+    if (!detail) return
+    if (!editSaleDate) {
+      showError('Choose a date and time')
+      return
+    }
+    setDateEditSaving(true)
+    try {
+      const updated = await api.patch(`/sales/${detail.id}`, {
+        createdAt: new Date(editSaleDate).toISOString(),
+      })
+      setDetail(updated)
+      setDateEditOpen(false)
+      setEditSaleDate('')
+      await load(false, true)
+    } catch (e) {
+      showError(e.message || 'Could not update sale date')
+    } finally {
+      setDateEditSaving(false)
+    }
   }
 
   async function saveAdditionalPayment() {
@@ -244,7 +288,14 @@ export default function SalesHistory() {
                   color: (s.balanceDue ?? 0) > 0.02 ? 'var(--warning)' : 'var(--text-muted)',
                   whiteSpace: 'nowrap',
                 }}>{(s.balanceDue ?? 0) > 0.02 ? fmt(s.balanceDue) : '—'}</td>
-                <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
+                <td style={{ fontWeight: 700 }}>
+                  {fmt(s.grandTotal)}
+                  {saleHasMarkup(s) && (
+                    <span className="badge badge-success" style={{ marginLeft: 6, fontSize: 10, verticalAlign: 'middle' }} title="One or more lines sold above catalog price">
+                      Markup
+                    </span>
+                  )}
+                </td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                 <td><span className={`badge ${statusClass(s.status)}`}>{s.status}</span></td>
                 <td>
@@ -252,6 +303,11 @@ export default function SalesHistory() {
                     <button className="icon-btn primary" title="View details" disabled={viewLoading} onClick={() => viewSale(s.id)}>
                       <Eye size={13} strokeWidth={2} />
                     </button>
+                    {isAdmin && (
+                      <button type="button" className="icon-btn primary" title="Edit sale date" onClick={() => openDateEdit(s)}>
+                        <Calendar size={13} strokeWidth={2} />
+                      </button>
+                    )}
                     {isAdmin && s.status === 'PARTIALLY_PAID' && (s.balanceDue ?? 0) > 0.02 && (
                       <button type="button" className="icon-btn primary" title="Record additional payment" onClick={() => openPaymentEdit(s)}>
                         <Pencil size={13} strokeWidth={2} />
@@ -293,15 +349,29 @@ export default function SalesHistory() {
             <div><span style={{ color: 'var(--text-muted)' }}>Payment: </span><strong>{detail.payment?.method?.replace('_', ' ') || '—'}</strong></div>
           </div>
           <table className="report-table" style={{ marginBottom: 20 }}>
-            <thead><tr><th>Product</th><th>Qty</th><th>Unit Price</th><th>Line total</th></tr></thead>
+            <thead><tr><th>Product</th><th>Qty</th><th>Catalog price</th><th>Charged price</th><th>Line total</th></tr></thead>
             <tbody>
-              {detail.saleItems.map(i => (
+              {detail.saleItems.map(i => {
+                const catalog = catalogUnitPriceForLine(i)
+                const marked = saleLineHasMarkup(i)
+                return (
                 <tr key={i.id}>
-                  <td>{i.product.name}</td><td>{i.quantity}</td>
-                  <td>{fmt(i.unitPrice)}</td>
+                  <td>{i.product.name}</td>
+                  <td>{i.quantity}</td>
+                  <td style={{ color: 'var(--text-muted)' }}>{fmt(catalog)}</td>
+                  <td>
+                    <span style={{ fontWeight: marked ? 700 : 500, color: marked ? 'var(--success)' : undefined }}>
+                      {fmt(i.unitPrice)}
+                    </span>
+                    {marked && (
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--success)' }}>
+                        +{fmt(i.unitPrice - catalog)} margin
+                      </span>
+                    )}
+                  </td>
                   <td style={{ fontWeight: 600 }}>{fmt(i.subtotal)}</td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
           <h4 style={{ fontSize: 14, marginBottom: 10, fontWeight: 700 }}>Pricing summary</h4>
@@ -332,11 +402,44 @@ export default function SalesHistory() {
               Change given at checkout: <strong>{fmt(detail.payment.change)}</strong>
             </p>
           )}
+          {isAdmin && (
+            <button type="button" className="btn btn-outline btn-full" style={{ marginBottom: 8 }} onClick={() => { setDetailModal(false); openDateEdit(detail); }}>
+              Edit sale date
+            </button>
+          )}
           {isAdmin && detail.status === 'PARTIALLY_PAID' && (detail.balanceDue ?? 0) > 0.02 && (
             <button type="button" className="btn btn-primary btn-full" style={{ marginBottom: 8 }} onClick={() => { setDetailModal(false); openPaymentEdit(detail); }}>
               Record additional payment
             </button>
           )}
+        </Modal>
+      )}
+
+      {dateEditOpen && detail && (
+        <Modal
+          title={`Edit date — sale #${detail.id}`}
+          onClose={() => { setDateEditOpen(false); setEditSaleDate('') }}
+          footer={
+            <>
+              <button className="btn btn-outline" type="button" onClick={() => { setDateEditOpen(false); setEditSaleDate('') }}>Cancel</button>
+              <button className="btn btn-primary" type="button" disabled={dateEditSaving} onClick={saveSaleDate}>
+                {dateEditSaving ? 'Saving…' : 'Save date'}
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 12 }}>
+            Updates when this sale appears in reports and history. Line prices and totals are not changed.
+          </p>
+          <div className="form-group">
+            <label>Sale date & time</label>
+            <input
+              type="datetime-local"
+              value={editSaleDate}
+              onChange={(e) => setEditSaleDate(e.target.value)}
+              max={toDatetimeLocalValue(new Date().toISOString())}
+            />
+          </div>
         </Modal>
       )}
 

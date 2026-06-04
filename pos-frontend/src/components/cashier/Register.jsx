@@ -353,6 +353,7 @@ export default function Register() {
             : i,
         )
       }
+      const catalogPrice = Number(product.price) || 0
       return [
         ...prev,
         {
@@ -361,9 +362,10 @@ export default function Register() {
           tagLabel,
           productTags: product.tags || [],
           name: productDisplayName(product),
-          unitPrice: product.price,
+          catalogPrice,
+          unitPrice: catalogPrice,
           quantity: 1,
-          subtotal: product.price,
+          subtotal: catalogPrice,
         },
       ]
     })
@@ -397,10 +399,35 @@ export default function Register() {
     setCart((prev) => prev.filter((i) => !lineMatches(i, productId, tagId)))
   }
 
+  function catalogForCartLine(item) {
+    if (item.catalogPrice != null && Number.isFinite(Number(item.catalogPrice))) {
+      return Number(item.catalogPrice)
+    }
+    const p = catalog.find((x) => x.id === item.productId)
+    return Number(p?.price) || 0
+  }
+
+  function updateLineUnitPrice(productId, tagId, raw) {
+    setCart((prev) =>
+      prev.map((i) => {
+        if (!lineMatches(i, productId, tagId)) return i
+        const catalog = catalogForCartLine(i)
+        const parsed = parseFloat(raw)
+        const unitPrice = Number.isFinite(parsed) ? Math.max(catalog, parsed) : catalog
+        return {
+          ...i,
+          unitPrice,
+          subtotal: i.quantity * unitPrice,
+        }
+      }),
+    )
+  }
+
   function saleItemsPayload() {
     return cart.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
+      unitPrice: i.unitPrice,
       ...(i.tagId != null && Number.isFinite(Number(i.tagId)) ? { tagId: i.tagId } : {}),
     }))
   }
@@ -744,19 +771,43 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                 <p>No items in cart</p>
               </div>
             )
-            : cart.map((item) => (
+            : cart.map((item) => {
+              const catalog = catalogForCartLine(item)
+              const markedUp = item.unitPrice > catalog + 0.009
+              return (
               <div
                 key={`${item.productId}-${item.tagId ?? 'x'}`}
                 className="cart-item"
               >
                 <div className="cart-item-name">
-                  {item.name}
-                  {item.tagLabel ? (
-                    <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
-                      {' '}
-                      · {item.tagLabel}
+                  <div>
+                    {item.name}
+                    {item.tagLabel ? (
+                      <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
+                        {' '}
+                        · {item.tagLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="cart-line-price-edit">
+                    <span className="cart-line-catalog" title="Catalog selling price">
+                      List {fmt(catalog)}
                     </span>
-                  ) : null}
+                    <input
+                      type="number"
+                      min={catalog}
+                      step="0.01"
+                      value={item.unitPrice}
+                      onChange={(e) => updateLineUnitPrice(item.productId, item.tagId, e.target.value)}
+                      title="Charge price for this sale (cannot go below list price)"
+                      aria-label={`Selling price for ${item.name}`}
+                    />
+                    {markedUp && (
+                      <span className="cart-line-markup-badge" title="Price increased for this sale only">
+                        +{fmt(item.unitPrice - catalog)}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="cart-item-controls">
                   <button
@@ -781,7 +832,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                   <X size={14} strokeWidth={2.5} />
                 </button>
               </div>
-            ))
+            )})
           }
         </div>
 
