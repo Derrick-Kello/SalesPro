@@ -12,6 +12,12 @@ export function saleLineHasMarkup(item) {
   return sold > catalog + 0.009
 }
 
+export function saleLineHasDiscount(item) {
+  const catalog = catalogUnitPriceForLine(item)
+  const sold = Number(item?.unitPrice ?? 0)
+  return sold < catalog - 0.009
+}
+
 export function saleHasMarkup(sale) {
   return (sale?.saleItems || []).some(saleLineHasMarkup)
 }

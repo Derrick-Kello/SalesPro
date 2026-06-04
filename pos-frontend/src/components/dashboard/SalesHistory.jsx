@@ -11,7 +11,7 @@ import { useAuth } from '../../context/AuthContext'
 import { useAlert } from '../../context/AlertContext'
 import { Eye, Filter, Trash2, Pencil, Calendar } from 'lucide-react'
 import { TableNumberCell } from '../table/TableColumns'
-import { catalogUnitPriceForLine, saleHasMarkup, saleLineHasMarkup } from '../../utils/salePricing'
+import { catalogUnitPriceForLine, saleHasMarkup, saleLineHasMarkup, saleLineHasDiscount } from '../../utils/salePricing'
 
 export default function SalesHistory() {
   const { user } = useAuth()
@@ -354,18 +354,24 @@ export default function SalesHistory() {
               {detail.saleItems.map(i => {
                 const catalog = catalogUnitPriceForLine(i)
                 const marked = saleLineHasMarkup(i)
+                const discounted = saleLineHasDiscount(i)
                 return (
                 <tr key={i.id}>
                   <td>{i.product.name}</td>
                   <td>{i.quantity}</td>
                   <td style={{ color: 'var(--text-muted)' }}>{fmt(catalog)}</td>
                   <td>
-                    <span style={{ fontWeight: marked ? 700 : 500, color: marked ? 'var(--success)' : undefined }}>
+                    <span style={{ fontWeight: (marked || discounted) ? 700 : 500, color: marked ? 'var(--success)' : discounted ? 'var(--warning)' : undefined }}>
                       {fmt(i.unitPrice)}
                     </span>
                     {marked && (
                       <span style={{ display: 'block', fontSize: 11, color: 'var(--success)' }}>
                         +{fmt(i.unitPrice - catalog)} margin
+                      </span>
+                    )}
+                    {discounted && (
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--warning)' }}>
+                        -{fmt(catalog - i.unitPrice)} discount
                       </span>
                     )}
                   </td>

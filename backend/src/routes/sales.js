@@ -20,7 +20,7 @@ function roundMoney(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
-/** POS may charge above catalog; product.price in DB is unchanged. */
+/** POS may charge above or below catalog; product.price in DB is unchanged. */
 function resolveSaleLinePricing(item, product) {
   const catalog = roundMoney(product.price || 0);
   const raw = item?.unitPrice;
@@ -28,15 +28,8 @@ function resolveSaleLinePricing(item, product) {
     return { unitPrice: catalog, catalogUnitPrice: catalog };
   }
   const requested = roundMoney(parseFloat(raw));
-  if (!Number.isFinite(requested)) {
+  if (!Number.isFinite(requested) || requested < 0) {
     const err = new Error("Invalid unit price on a line item");
-    err.status = 400;
-    throw err;
-  }
-  if (requested + 1e-6 < catalog) {
-    const err = new Error(
-      `Selling price for ${product.name} cannot be below the catalog price (${catalog})`
-    );
     err.status = 400;
     throw err;
   }

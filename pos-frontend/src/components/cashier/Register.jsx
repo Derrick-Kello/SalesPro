@@ -414,7 +414,7 @@ export default function Register() {
       const d = String(draft).trim()
       if (d === '' || d === '.') return catalog
       const n = parseFloat(d)
-      return Number.isFinite(n) ? Math.max(catalog, n) : catalog
+      return Number.isFinite(n) && n >= 0 ? n : catalog
     }
     return Number(item.unitPrice) || catalog
   }
@@ -796,6 +796,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
               const catalog = catalogForCartLine(item)
               const effectivePrice = resolvedLineUnitPrice(item)
               const markedUp = effectivePrice > catalog + 0.009
+              const discounted = effectivePrice < catalog - 0.009
               const priceInputValue =
                 item.unitPriceDraft !== undefined ? item.unitPriceDraft : String(item.unitPrice)
               return (
@@ -823,12 +824,17 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                       value={priceInputValue}
                       onChange={(e) => updateLineUnitPriceDraft(item.productId, item.tagId, e.target.value)}
                       onBlur={() => commitLineUnitPrice(item.productId, item.tagId)}
-                      title="Charge price for this sale (cannot go below list price)"
+                      title="Charge price for this sale (can be set above or below list price)"
                       aria-label={`Selling price for ${item.name}`}
                     />
                     {markedUp && (
                       <span className="cart-line-markup-badge" title="Price increased for this sale only">
                         +{fmt(effectivePrice - catalog)}
+                      </span>
+                    )}
+                    {discounted && (
+                      <span className="cart-line-markup-badge" style={{ background: 'var(--warning)', color: '#fff' }} title="Price reduced for this sale only">
+                        -{fmt(catalog - effectivePrice)}
                       </span>
                     )}
                   </div>
