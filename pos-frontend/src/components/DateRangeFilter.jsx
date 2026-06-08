@@ -1,21 +1,73 @@
 /**
- * DateRangeFilter — unified date range picker with quick-select presets.
- *
- * Uses <input type="date"> for the calendar picker but hides the browser's
- * format hint text — only the calendar icon is visible.
- *
- * Presets: Today · Yesterday · This Month · Last Month · This Year · Last Year
+ * DateRangeFilter — date range picker with:
+ *  - Text input: type in dd/mm/yyyy
+ *  - Calendar icon: opens the native date picker
+ *  - Quick presets: Today · Yesterday · This Month · Last Month · This Year · Last Year
+ *  - Auto-fires onChange when a valid complete range is set
  */
 import { useEffect, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { X, CalendarDays } from 'lucide-react'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
 function toYMD(d) {
   const yyyy = d.getFullYear()
   const mm   = String(d.getMonth() + 1).padStart(2, '0')
   const dd   = String(d.getDate()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd}`
 }
+
+/** YYYY-MM-DD → dd/mm/yyyy */
+function ymdToDmy(ymd) {
+  if (!ymd || ymd.length !== 10) return ''
+  const [y, m, d] = ymd.split('-')
+  return `${d}/${m}/${y}`
+}
+
+/**
+ * Parse a dd/mm/yyyy (or dd-mm-yyyy, ddmmyyyy) string into YYYY-MM-DD.
+ * Returns '' if incomplete or invalid.
+ */
+function parseDmy(raw) {
+  if (!raw) return ''
+  const s = raw.trim()
+
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+
+  // Normalise separators
+  const parts = s.replace(/[-\.]/g, '/').split('/')
+  if (parts.length === 3) {
+    const [d, m, y] = parts
+    const dd   = d.padStart(2, '0')
+    const mm   = m.padStart(2, '0')
+    const yyyy = y.length === 2 ? `20${y}` : y
+    if (yyyy.length !== 4) return ''
+    const date = new Date(`${yyyy}-${mm}-${dd}`)
+    if (isNaN(date.getTime())) return ''
+    // Sanity-check the parts round-trip (catches 30/02 etc.)
+    if (
+      date.getFullYear() !== Number(yyyy) ||
+      date.getMonth() + 1 !== Number(mm)  ||
+      date.getDate()      !== Number(dd)
+    ) return ''
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  // 8-digit no separator: ddmmyyyy
+  if (/^\d{8}$/.test(s)) {
+    const dd   = s.slice(0, 2)
+    const mm   = s.slice(2, 4)
+    const yyyy = s.slice(4)
+    const date = new Date(`${yyyy}-${mm}-${dd}`)
+    if (isNaN(date.getTime())) return ''
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  return ''
+}
+
+// ── presets ───────────────────────────────────────────────────────────────────
 
 function getPresetRange(preset) {
   const now   = new Date()
@@ -24,8 +76,7 @@ function getPresetRange(preset) {
     case 'today':
       return { start: today, end: today }
     case 'yesterday': {
-      const y = new Date(now)
-      y.setDate(y.getDate() - 1)
+      const y = new Date(now); y.setDate(y.getDate() - 1)
       const ymd = toYMD(y)
       return { start: ymd, end: ymd }
     }
@@ -44,8 +95,7 @@ function getPresetRange(preset) {
       const y = now.getFullYear() - 1
       return { start: `${y}-01-01`, end: `${y}-12-31` }
     }
-    default:
-      return null
+    default: return null
   }
 }
 
@@ -58,7 +108,133 @@ const PRESETS = [
   { id: 'last-year',  label: 'Last Year' },
 ]
 
-// ── component ─────────────────────────────────────────────────────────────────
+// ── DateInput ─────────────────────────────────────────────────────────────────
+/**
+ * Single date field:
+ *  - Visible text input accepts dd/mm/yyyy typing with auto-slash insertion
+ *  - Calendar icon button opens a hidden <input type="date"> picker
+ *  - Both stay in sync; commits a YYYY-MM-DD string via onCommit
+ */
+function DateInput({ value, ariaLabel, onCommit, minYmd, maxYmd }) {
+  const [text, setText]     = useState(() => ymdToDmy(value) || '')
+  const pickerRef           = useRef(null)
+  const prevValueRef        = useRef(value)
+
+  // Sync display when parent changes value (preset click, clear, etc.)
+  useEffect(() => {
+    if (value !== prevValueRef.current) {
+      prevValueRef.current = value
+      setText(ymdToDmy(value) || '')
+    }
+  }, [value])
+
+  function handleTextChange(e) {
+    let raw = e.target.value
+
+    // Allow only digits and slashes
+    raw = raw.replace(/[^\d/]/g, '')
+
+    // Auto-insert slashes
+    if (raw.length === 2 && text.length === 1 && !raw.includes('/')) raw += '/'
+    if (raw.length === 5 && text.length === 4 && raw.split('/').length === 2) raw += '/'
+
+    if (raw.length > 10) return
+    setText(raw)
+
+    if (raw === '') { onCommit(''); return }
+
+    if (raw.length === 10) {
+      const ymd = parseDmy(raw)
+      if (ymd) onCommit(ymd)
+    }
+  }
+
+  function handleTextBlur() {
+    if (!text) { onCommit(''); return }
+    const ymd = parseDmy(text)
+    if (ymd) {
+      setText(ymdToDmy(ymd))
+      onCommit(ymd)
+    } else {
+      // Revert to last good value
+      setText(ymdToDmy(value) || '')
+    }
+  }
+
+  function handlePickerChange(e) {
+    const ymd = e.target.value   // already YYYY-MM-DD
+    if (!ymd) { setText(''); onCommit(''); return }
+    setText(ymdToDmy(ymd))
+    onCommit(ymd)
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 3, position: 'relative' }}>
+      <input
+        type="text"
+        inputMode="numeric"
+        value={text}
+        placeholder="dd/mm/yyyy"
+        onChange={handleTextChange}
+        onBlur={handleTextBlur}
+        aria-label={ariaLabel}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          fontSize: 13,
+          padding: 0,
+          outline: 'none',
+          width: 80,
+          color: 'var(--text)',
+          fontFamily: 'inherit',
+        }}
+      />
+      {/* Calendar icon — clicking it opens the hidden date picker */}
+      <button
+        type="button"
+        tabIndex={-1}
+        title="Open calendar"
+        onClick={() => pickerRef.current?.showPicker?.() || pickerRef.current?.click()}
+        style={{
+          background: 'none',
+          border: 'none',
+          padding: '0 2px',
+          cursor: 'pointer',
+          display: 'flex',
+          alignItems: 'center',
+          color: 'var(--text-muted)',
+          flexShrink: 0,
+        }}
+      >
+        <CalendarDays size={14} strokeWidth={2} />
+      </button>
+      {/* Hidden native date picker — used only for calendar UI */}
+      <input
+        ref={pickerRef}
+        type="date"
+        value={value || ''}
+        min={minYmd || undefined}
+        max={maxYmd || undefined}
+        onChange={handlePickerChange}
+        tabIndex={-1}
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          opacity: 0,
+          pointerEvents: 'none',
+          width: 1,
+          height: 1,
+          overflow: 'hidden',
+          top: 0,
+          left: 0,
+        }}
+      />
+    </div>
+  )
+}
+
+// ── main component ────────────────────────────────────────────────────────────
+
 export default function DateRangeFilter({
   startDate,
   endDate,
@@ -76,6 +252,7 @@ export default function DateRangeFilter({
     onChange?.(s, e)
   }
 
+  // Auto-fire when both values are valid and complete
   useEffect(() => {
     const sOk = !startDate || startDate.length === 10
     const eOk = !endDate   || endDate.length   === 10
@@ -99,40 +276,22 @@ export default function DateRangeFilter({
     fire('', '')
   }
 
-  function handleStartChange(val) {
+  function handleStartCommit(ymd) {
     setActivePreset(null)
-    onStartChange?.(val)
+    onStartChange?.(ymd)
   }
 
-  function handleEndChange(val) {
+  function handleEndCommit(ymd) {
     setActivePreset(null)
-    onEndChange?.(val)
+    onEndChange?.(ymd)
   }
 
   const hasFilter = startDate || endDate
 
-  // Shared style: makes the date input show ONLY the calendar icon.
-  // We set width to just the icon width and clip the text portion.
-  const dateInputStyle = {
-    border: 'none',
-    background: 'transparent',
-    outline: 'none',
-    padding: 0,
-    margin: 0,
-    // Width of just the calendar icon button (~22px) — text part is clipped
-    width: 22,
-    // Overflow hidden clips the mm/dd/yyyy text
-    overflow: 'hidden',
-    cursor: 'pointer',
-    colorScheme: 'light',
-    // Colour scheme so the icon inherits the theme colour
-    color: 'var(--text-muted)',
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 
-      {/* ── Preset pills ── */}
+      {/* Preset pills */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {PRESETS.map(p => (
           <button
@@ -158,7 +317,7 @@ export default function DateRangeFilter({
         ))}
       </div>
 
-      {/* ── From → To row ── */}
+      {/* From → To */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div style={{
           display: 'flex',
@@ -167,41 +326,23 @@ export default function DateRangeFilter({
           background: 'var(--surface2)',
           border: '1px solid var(--border)',
           borderRadius: 8,
-          padding: '5px 10px',
+          padding: '4px 10px',
         }}>
-
-          {/* From */}
           <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>From</span>
-          <span style={{ fontSize: 13, color: startDate ? 'var(--text)' : 'var(--text-muted)', minWidth: 68, whiteSpace: 'nowrap' }}>
-            {startDate ? startDate.split('-').reverse().join('/') : 'dd/mm/yyyy'}
-          </span>
-          <input
-            type="date"
+          <DateInput
             value={startDate}
-            max={endDate || undefined}
-            onChange={e => handleStartChange(e.target.value)}
-            style={dateInputStyle}
-            aria-label="Start date"
-            title="Pick start date"
+            ariaLabel="Start date"
+            maxYmd={endDate || undefined}
+            onCommit={handleStartCommit}
           />
-
           <span style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 2px' }}>→</span>
-
-          {/* To */}
           <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>To</span>
-          <span style={{ fontSize: 13, color: endDate ? 'var(--text)' : 'var(--text-muted)', minWidth: 68, whiteSpace: 'nowrap' }}>
-            {endDate ? endDate.split('-').reverse().join('/') : 'dd/mm/yyyy'}
-          </span>
-          <input
-            type="date"
+          <DateInput
             value={endDate}
-            min={startDate || undefined}
-            onChange={e => handleEndChange(e.target.value)}
-            style={dateInputStyle}
-            aria-label="End date"
-            title="Pick end date"
+            ariaLabel="End date"
+            minYmd={startDate || undefined}
+            onCommit={handleEndCommit}
           />
-
           {hasFilter && (
             <button
               onClick={handleClear}
@@ -213,7 +354,6 @@ export default function DateRangeFilter({
             </button>
           )}
         </div>
-
         {loading && (
           <span
             className="spin"
