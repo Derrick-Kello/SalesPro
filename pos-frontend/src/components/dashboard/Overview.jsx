@@ -6,6 +6,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   PieChart, Pie, Cell,
 } from 'recharts'
+import { fmtDate } from '../../utils/dateFormat'
 import { DollarSign, ShoppingBag, TrendingDown, AlertTriangle, RefreshCw } from 'lucide-react'
 
 const PIE_COLORS = ['#0066CC','#28A745','#E07900','#D93025','#0891B2','#6366F1','#EC4899','#14B8A6']
@@ -54,7 +55,7 @@ export default function Overview() {
 
   const weeklyData = (stats?.weeklyChart || []).map(d => ({
     ...d,
-    date: new Date(d.date + 'T00:00:00').toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' }),
+    date: fmtDate(d.date + 'T00:00:00'),
     sales: parseFloat((d.sales || 0).toFixed(2)),
     expenses: parseFloat((d.expenses || 0).toFixed(2)),
   }))

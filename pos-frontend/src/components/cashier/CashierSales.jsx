@@ -6,6 +6,7 @@ import { useAlert } from '../../context/AlertContext'
 import Modal from '../Modal'
 import { Printer, Filter, Trash2 } from 'lucide-react'
 import { TableNumberCell } from '../table/TableColumns'
+import { fmtDateTime } from '../../utils/dateFormat'
 
 const STORE_NAME = 'SalesPro'
 
@@ -217,7 +218,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
                 )}
                 <TableNumberCell index={idx} />
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
-                <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{new Date(s.createdAt).toLocaleString()}</td>
+                <td style={{ whiteSpace: 'nowrap', fontSize: 13 }}>{fmtDateTime(s.createdAt)}</td>
                 <td>{s.user.fullName}</td>
                 <td>{s.customer?.name || <span style={{ color: 'var(--text-light)' }}>Walk-in</span>}</td>
                 <td style={{ color: 'var(--text-muted)' }}>{s.saleItems?.length ?? 0}</td>
@@ -268,7 +269,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             <hr className="receipt-divider" />
             <div className="receipt-meta">
               <div><strong>Receipt #:</strong> {receiptSale.id}</div>
-              <div><strong>Date:</strong> {new Date(receiptSale.createdAt).toLocaleString()}</div>
+              <div><strong>Date:</strong> {fmtDateTime(receiptSale.createdAt)}</div>
               <div><strong>Cashier:</strong> {receiptSale.user.fullName}</div>
               {receiptSale.customer && <div><strong>Customer:</strong> {receiptSale.customer.name}</div>}
             </div>

@@ -10,6 +10,7 @@ import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, Trash2, Filter } from 'lucide-react'
 import { useTableSelection } from '../../hooks/useTableSelection'
 import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { fmtDate } from '../../utils/dateFormat'
 import { bulkDeleteLoop } from '../../utils/bulkDelete'
 import { useAlert } from '../../context/AlertContext'
 
@@ -137,7 +138,7 @@ export default function AllExpenses() {
               <tr key={e.id}>
                 <TableSelectCell checked={selectedIds.includes(e.id)} onChange={(c) => toggle(e.id, c)} />
                 <TableNumberCell index={idx} />
-                <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{new Date(e.date).toLocaleDateString()}</td>
+                <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>{fmtDate(e.date)}</td>
                 <td style={{ fontWeight: 600 }}>{e.title}</td>
                 <td><span className="badge badge-info">{e.category.name}</span></td>
                 {showBranchCol && <td style={{ color: 'var(--text-muted)' }}>{e.branch?.name || '—'}</td>}

@@ -11,6 +11,7 @@ import {
   TableSelectHeader,
 } from '../table/TableColumns'
 import { Download, Printer } from 'lucide-react'
+import { fmtDateTime } from '../../utils/dateFormat'
 
 function filterRows(rows, search, fields) {
   const q = search.trim().toLowerCase()
@@ -90,13 +91,7 @@ export default function WarehouseReportSection({ data, fmt, title, onDownloadCsv
     clear,
   } = useTableSelection(filteredXfers, (t) => t.id)
 
-  const fmtDt = (iso) =>
-    iso
-      ? new Date(iso).toLocaleString(undefined, {
-          dateStyle: 'medium',
-          timeStyle: 'short',
-        })
-      : '—'
+  const fmtDt = (iso) => fmtDateTime(iso)
 
   async function deleteSelectedTransfers() {
     if (!selectedIds.length) return

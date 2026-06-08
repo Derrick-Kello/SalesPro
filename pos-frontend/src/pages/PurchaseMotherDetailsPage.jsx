@@ -15,6 +15,7 @@ import {
 import { getMotherVariantName, normalizeMotherName } from '../utils/variantGrouping'
 import { MoreVertical, Search } from 'lucide-react'
 import PurchaseEditForm, { lineFromReceipt } from '../components/purchase/PurchaseEditForm'
+import { fmtDateTime } from '../utils/dateFormat'
 
 function closeActionsMenu(e) {
   e.target.closest('details')?.removeAttribute('open')
@@ -306,7 +307,7 @@ export default function PurchaseMotherDetailsPage() {
                   />
                   <TableNumberCell index={idx} />
                   <td style={{ fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                    {r.createdAt ? new Date(r.createdAt).toLocaleString() : '—'}
+                    {r.createdAt ? fmtDateTime(r.createdAt) : '—'}
                   </td>
                   <td style={{ fontWeight: 600 }}>{r.warehouse?.name ?? '—'}</td>
                   <td>{r.product?.name ?? '—'}</td>

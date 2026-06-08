@@ -5,6 +5,8 @@ import { useBranch } from '../../context/BranchContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import WarehouseReportSection from './WarehouseReportSection'
+import { fmtDateTime } from '../../utils/dateFormat'
+import DateRangeFilter from '../DateRangeFilter'
 
 export default function Reports({ subSection = 'sales-report' }) {
   const { user } = useAuth()
@@ -54,22 +56,26 @@ export default function Reports({ subSection = 'sales-report' }) {
     }
   }, [subSection, effectiveBranchId, warehouses, reportWarehouseId])
 
-  useEffect(() => { load() }, [subSection, effectiveBranchId, startDate, endDate, reportWarehouseId])
+  // Date inputs are only applied when the user picks a complete date (or on subSection/branch change).
+  // Do NOT include startDate/endDate in the effect — DateRangeFilter calls loadWithDates directly
+  // once both values are complete, avoiding partial-date requests.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadWithDates(startDate, endDate) }, [subSection, effectiveBranchId, reportWarehouseId])
 
-  async function load() {
+  async function loadWithDates(s = startDate, e = endDate) {
     setLoading(true); setData(null)
     try {
       const params = new URLSearchParams()
-      if (startDate) params.append('startDate', startDate)
-      if (endDate) params.append('endDate', endDate)
+      if (s) params.append('startDate', s)
+      if (e) params.append('endDate', e)
       if (effectiveBranchId) params.append('branchId', effectiveBranchId)
       const qs = params.toString() ? '?' + params : ''
 
       if (subSection === 'warehouse-report') {
         const wp = new URLSearchParams()
         if (reportWarehouseId) wp.append('warehouseId', reportWarehouseId)
-        if (startDate) wp.append('startDate', startDate)
-        if (endDate) wp.append('endDate', endDate)
+        if (s) wp.append('startDate', s)
+        if (e) wp.append('endDate', e)
         if (effectiveBranchId) wp.append('branchId', effectiveBranchId)
         const wqs = wp.toString() ? '?' + wp : ''
         setData(await api.get(`/reports/warehouse${wqs}`))
@@ -119,42 +125,38 @@ export default function Reports({ subSection = 'sales-report' }) {
             </select>
           )}
           {subSection === 'warehouse-report' && (
-            <>
-              <select
-                value={reportWarehouseId ?? ''}
-                onChange={e =>
-                  setReportWarehouseId(e.target.value ? parseInt(e.target.value, 10) : null)
-                }
-                style={{ minWidth: 180 }}
-              >
-                <option value="">All warehouses</option>
-                {warehousesForFilter.filter((w) => w.isActive !== false).map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.name}{w.branch?.name ? ` · ${w.branch.name}` : ''}
-                  </option>
-                ))}
-              </select>
-              <input type="date" aria-label="Transfer history from" value={startDate} onChange={e => setStartDate(e.target.value)} />
-              <input type="date" aria-label="Transfer history until" value={endDate} onChange={e => setEndDate(e.target.value)} />
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', maxWidth: 220 }}>
-                Dates filter transfer history below; stock totals are live.
-              </span>
-            </>
+            <select
+              value={reportWarehouseId ?? ''}
+              onChange={e =>
+                setReportWarehouseId(e.target.value ? parseInt(e.target.value, 10) : null)
+              }
+              style={{ minWidth: 180 }}
+            >
+              <option value="">All warehouses</option>
+              {warehousesForFilter.filter((w) => w.isActive !== false).map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name}{w.branch?.name ? ` · ${w.branch.name}` : ''}
+                </option>
+              ))}
+            </select>
           )}
-          {(subSection === 'sales-report' || subSection === 'payments' || subSection === 'profit-loss') && (
-            <>
-              <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-              <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-            </>
+          {(subSection === 'sales-report' || subSection === 'payments' || subSection === 'profit-loss' || subSection === 'user-report' || subSection === 'warehouse-report') && (
+            <DateRangeFilter
+              startDate={startDate}
+              endDate={endDate}
+              onStartChange={setStartDate}
+              onEndChange={setEndDate}
+              onChange={(s, e) => loadWithDates(s, e)}
+              loading={loading}
+            />
           )}
-          <button className="btn btn-outline" onClick={load}>Filter</button>
         </div>
       </div>
 
       {loading && <p style={{ color: 'var(--text-muted)' }}>Loading…</p>}
       {data?.error && <p style={{ color: 'var(--danger)' }}>{data.error}</p>}
       {!loading && data && !data.error && (
-        <ReportBody type={subSection} data={data} fmt={fmt} title={titles[subSection]} onRefresh={() => load(true)} />
+        <ReportBody type={subSection} data={data} fmt={fmt} title={titles[subSection]} onRefresh={() => loadWithDates()} />
       )}
     </div>
   )
@@ -194,7 +196,7 @@ function buildWarehouseCsv(d, fmt) {
     csvEscape('Cost'), csvEscape('From'), csvEscape('To'), csvEscape('By'), csvEscape('Note'),
   ].join(','))
   for (const t of (d.transferHistory || [])) {
-    const when = t.createdAt ? new Date(t.createdAt).toLocaleString() : ''
+    const when = t.createdAt ? fmtDateTime(t.createdAt) : ''
     lines.push([
       csvEscape(when),
       csvEscape(t.productName), t.quantity, csvEscape(t.routeHint || ''),

@@ -12,6 +12,8 @@ import { useAlert } from '../../context/AlertContext'
 import { Eye, Filter, Trash2, Pencil, Calendar } from 'lucide-react'
 import { TableNumberCell } from '../table/TableColumns'
 import { catalogUnitPriceForLine, saleHasMarkup, saleLineHasMarkup, saleLineHasDiscount } from '../../utils/salePricing'
+import { fmtDateTime } from '../../utils/dateFormat'
+import DateRangeFilter from '../DateRangeFilter'
 
 export default function SalesHistory() {
   const { user } = useAuth()
@@ -37,14 +39,16 @@ export default function SalesHistory() {
   const [selectedIds, setSelectedIds]  = useState(() => ([]))
   const [bulkDeleting, setBulkDeleting]= useState(false)
 
-  async function load(showFilter = false, silent = false) {
+  async function load(showFilter = false, silent = false, overrideStart, overrideEnd) {
     if (!silent) {
       if (showFilter) setFiltering(true); else setTableLoading(true)
     }
     try {
       const params = new URLSearchParams()
-      if (startDate) params.append('startDate', startDate)
-      if (endDate)   params.append('endDate', endDate)
+      const s = overrideStart !== undefined ? overrideStart : startDate
+      const e = overrideEnd   !== undefined ? overrideEnd   : endDate
+      if (s) params.append('startDate', s)
+      if (e) params.append('endDate', e)
       if (selectedBranchId) params.append('branchId', selectedBranchId)
       setSales(await api.get(`/sales${params.toString() ? '?' + params : ''}`))
       if (!silent) setSelectedIds([])
@@ -190,17 +194,14 @@ export default function SalesHistory() {
     <div>
       <div className="section-header">
         <h2>Sales History</h2>
-        <div className="date-filters">
-          <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
-          <button className="btn btn-outline" onClick={() => load(true)} disabled={filtering} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            {filtering
-              ? <span className="spin" style={{ display: 'inline-block', width: 13, height: 13, border: '2px solid var(--border2)', borderTopColor: 'var(--primary)', borderRadius: '50%' }} />
-              : <Filter size={13} strokeWidth={2} />
-            }
-            Filter
-          </button>
-        </div>
+        <DateRangeFilter
+          startDate={startDate}
+          endDate={endDate}
+          onStartChange={setStartDate}
+          onEndChange={setEndDate}
+          onChange={(s, e) => load(true, false, s, e)}
+          loading={filtering}
+        />
       </div>
 
       {can('sales.delete') && (
@@ -275,7 +276,7 @@ export default function SalesHistory() {
                 )}
                 <TableNumberCell index={idx} />
                 <td style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>#{s.id}</td>
-                <td style={{ whiteSpace: 'nowrap' }}>{new Date(s.createdAt).toLocaleString()}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(s.createdAt)}</td>
                 <td>{s.user.fullName}</td>
                 <td>{s.customer?.name || <span style={{ color: 'var(--text-light)' }}>Walk-in</span>}</td>
                 <td>{fmt(s.totalAmount)}</td>
@@ -343,7 +344,7 @@ export default function SalesHistory() {
             <span className={`badge ${statusClass(detail.status)}`}>{detail.status}</span>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 24px', marginBottom: 20, fontSize: 13.5, background: 'var(--surface2)', padding: '14px 16px', borderRadius: 10, border: '1px solid var(--border)' }}>
-            <div><span style={{ color: 'var(--text-muted)' }}>Date: </span><strong>{new Date(detail.createdAt).toLocaleString()}</strong></div>
+            <div><span style={{ color: 'var(--text-muted)' }}>Date: </span><strong>{fmtDateTime(detail.createdAt)}</strong></div>
             <div><span style={{ color: 'var(--text-muted)' }}>Cashier: </span><strong>{detail.user.fullName}</strong></div>
             <div><span style={{ color: 'var(--text-muted)' }}>Customer: </span><strong>{detail.customer?.name || 'Walk-in'}</strong></div>
             <div><span style={{ color: 'var(--text-muted)' }}>Payment: </span><strong>{detail.payment?.method?.replace('_', ' ') || '—'}</strong></div>

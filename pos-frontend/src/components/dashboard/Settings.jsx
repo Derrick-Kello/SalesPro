@@ -10,6 +10,7 @@ import {
   Plus, Trash2, Copy,
 } from 'lucide-react'
 import { useAlert } from '../../context/AlertContext'
+import { fmtDate } from '../../utils/dateFormat'
 
 const BUILT_IN_ROLES = ['ADMIN', 'MANAGER', 'CASHIER']
 const BUILT_IN_LABELS = { MANAGER: 'Manager', CASHIER: 'Cashier' }
@@ -447,7 +448,7 @@ export default function Settings() {
                             : <span style={{ fontSize: 12, color: 'var(--text-light)' }}>Role default</span>
                         }
                       </td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{new Date(u.createdAt).toLocaleDateString()}</td>
+                      <td style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDate(u.createdAt)}</td>
                       <td>
                         {u.role !== 'ADMIN' ? (
                           <div className="action-group">

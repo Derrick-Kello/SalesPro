@@ -5,6 +5,7 @@ import Modal from '../Modal'
 import { SaveBtn } from '../LoadingRow'
 import { useAsync } from '../../hooks/useAsync'
 import { Search, Eye, Pencil, Trash2 } from 'lucide-react'
+import { fmtDate } from '../../utils/dateFormat'
 
 const STATUS_BADGE = {
   PENDING:  'badge-warning',
@@ -119,7 +120,7 @@ export default function Expenses() {
             {filtered.map(e => (
               <tr key={e.id}>
                 <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{e.referenceNo || `EXP-${e.id}`}</td>
-                <td style={{ color: 'var(--text-muted)' }}>{new Date(e.date || e.createdAt).toLocaleDateString()}</td>
+                <td style={{ color: 'var(--text-muted)' }}>{fmtDate(e.date || e.createdAt)}</td>
                 <td style={{ fontWeight: 600 }}>{e.title}</td>
                 <td><span className="badge badge-info">{e.category?.name || e.categoryName || '—'}</span></td>
                 <td style={{ fontWeight: 700, color: 'var(--danger)' }}>{fmt(e.amount ?? 0)}</td>
@@ -145,7 +146,7 @@ export default function Expenses() {
         >
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
             <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Reference</strong><div style={{ fontFamily: 'monospace' }}>{selected.referenceNo || `EXP-${selected.id}`}</div></div>
-            <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Date</strong><div>{new Date(selected.date || selected.createdAt).toLocaleDateString()}</div></div>
+            <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Date</strong><div>{fmtDate(selected.date || selected.createdAt)}</div></div>
             <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Category</strong><div>{selected.category?.name || selected.categoryName || '—'}</div></div>
             <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Status</strong><div><span className={`badge ${STATUS_BADGE[selected.status] || 'badge-info'}`}>{selected.status || 'PENDING'}</span></div></div>
             <div><strong style={{ fontSize: 12, color: 'var(--text-muted)' }}>Amount</strong><div style={{ fontSize: 20, fontWeight: 800, color: 'var(--danger)' }}>{fmt(selected.amount ?? 0)}</div></div>

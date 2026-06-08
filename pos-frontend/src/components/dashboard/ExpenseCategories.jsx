@@ -8,6 +8,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAlert } from '../../context/AlertContext'
 import { useTableSelection } from '../../hooks/useTableSelection'
 import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
+import { fmtDate } from '../../utils/dateFormat'
 import { bulkDeleteLoop } from '../../utils/bulkDelete'
 
 export default function ExpenseCategories() {
@@ -90,7 +91,7 @@ export default function ExpenseCategories() {
                 <TableSelectCell checked={selectedIds.includes(c.id)} onChange={(v) => toggle(c.id, v)} />
                 <TableNumberCell index={idx} />
                 <td style={{ fontWeight: 600 }}>{c.name}</td>
-                <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(c.createdAt).toLocaleDateString()}</td>
+                <td style={{ color: 'var(--text-muted)', fontSize: 13 }}>{fmtDate(c.createdAt)}</td>
                 <td>
                   <div className="action-group">
                     <button className="icon-btn primary" title="Edit" onClick={() => openEdit(c)}><Pencil size={13} strokeWidth={2} /></button>

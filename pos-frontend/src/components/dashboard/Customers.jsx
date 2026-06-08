@@ -8,6 +8,7 @@ import { useAlert } from '../../context/AlertContext'
 import { useAsync } from '../../hooks/useAsync'
 import { useTabRefresh } from '../../hooks/useTabRefresh'
 import { Plus, Pencil, History, Search, Trash2 } from 'lucide-react'
+import { fmtDate } from '../../utils/dateFormat'
 import { useTableSelection } from '../../hooks/useTableSelection'
 import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
 import { bulkDeleteLoop } from '../../utils/bulkDelete'
@@ -197,7 +198,7 @@ export default function Customers() {
                     <tr key={s.id}>
                       <TableNumberCell index={idx} />
                       <td style={{ fontFamily: 'monospace' }}>#{s.id}</td>
-                      <td>{new Date(s.createdAt).toLocaleDateString()}</td>
+                      <td>{fmtDate(s.createdAt)}</td>
                       <td style={{ fontWeight: 700 }}>{fmt(s.grandTotal)}</td>
                       <td>{s.payment?.method?.replace('_', ' ') || '—'}</td>
                     </tr>

@@ -16,6 +16,7 @@ import {
 import { buildMotherGroupKey, getMotherVariantName } from '../../utils/variantGrouping'
 import { MoreVertical, Search } from 'lucide-react'
 import PurchaseEditForm, { lineFromReceipt } from '../purchase/PurchaseEditForm'
+import { fmtDateTime } from '../../utils/dateFormat'
 
 function closeActionsMenu(e) {
   e.target.closest('details')?.removeAttribute('open')
@@ -379,7 +380,7 @@ export default function PurchaseHistory() {
                 />
                 <TableNumberCell index={idx} />
                 <td style={{ fontSize: 12.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-                  {g.latestAt ? new Date(g.latestAt).toLocaleString() : '—'}
+                  {g.latestAt ? fmtDateTime(g.latestAt) : '—'}
                 </td>
                 <td style={{ fontWeight: 600 }}>{g.warehouse?.name ?? '—'}</td>
                 <td style={{ fontSize: 13, color: 'var(--text-muted)' }}>

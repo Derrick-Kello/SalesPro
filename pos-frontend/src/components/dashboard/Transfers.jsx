@@ -8,6 +8,7 @@ import { Plus, ArrowRight, Trash2, Search, ChevronLeft } from 'lucide-react'
 import { usePermissions } from '../../context/PermissionContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import { useAlert } from '../../context/AlertContext'
+import { fmtDateTime } from '../../utils/dateFormat'
 import { productDisplayName } from '../../utils/productDisplay'
 import { useTableSelection } from '../../hooks/useTableSelection'
 import { TableBulkBar, TableNumberCell, TableSelectCell, TableSelectHeader } from '../table/TableColumns'
@@ -339,7 +340,7 @@ export default function Transfers() {
                   <TableSelectCell checked={selectedIds.includes(t.id)} onChange={(c) => toggle(t.id, c)} />
                 )}
                 <TableNumberCell index={idx} />
-                <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{new Date(t.createdAt).toLocaleString()}</td>
+                <td style={{ fontSize: 13, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{fmtDateTime(t.createdAt)}</td>
                 <td style={{ fontWeight: 600 }}>{t.product ? productDisplayName(t.product) : '—'}</td>
                 <td style={{ fontWeight: 700 }}>{t.quantity}</td>
                 <td style={{ fontSize: 13 }}>{fmt(t.costPrice || 0)}</td>

@@ -9,6 +9,7 @@ import BarcodeDisplay from '../BarcodeDisplay'
 import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphone, Printer, X, Barcode, AlertTriangle, Wallet } from 'lucide-react'
 import QRCode from 'react-qr-code'
 import { productDisplayName } from '../../utils/productDisplay'
+import { fmtDateTime } from '../../utils/dateFormat'
 
 const STORE_NAME = 'SalesPro'
 
@@ -1181,7 +1182,7 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             <hr className="receipt-divider" />
             <div className="receipt-meta">
               <div><strong>Receipt #:</strong> {lastSale.id}</div>
-              <div><strong>Date:</strong> {new Date(lastSale.createdAt).toLocaleString()}</div>
+              <div><strong>Date:</strong> {fmtDateTime(lastSale.createdAt)}</div>
               <div><strong>Cashier:</strong> {lastSale.user.fullName}</div>
               {lastSale.customer && <div><strong>Customer:</strong> {lastSale.customer.name}</div>}
             </div>
