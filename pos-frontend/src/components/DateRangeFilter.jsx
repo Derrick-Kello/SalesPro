@@ -1,9 +1,10 @@
 /**
  * DateRangeFilter — unified date range picker with quick-select presets.
  *
- * Preset buttons: Today · Yesterday · This Week · Last Month · Last Year
- * Auto-fires onChange(startDate, endDate) when both values are complete
- * (full YYYY-MM-DD) or when both are cleared. No separate Filter button needed.
+ * Uses <input type="date"> for the calendar picker but hides the browser's
+ * format hint text — only the calendar icon is visible.
+ *
+ * Presets: Today · Yesterday · This Month · Last Month · This Year · Last Year
  */
 import { useEffect, useRef, useState } from 'react'
 import { X } from 'lucide-react'
@@ -28,18 +29,17 @@ function getPresetRange(preset) {
       const ymd = toYMD(y)
       return { start: ymd, end: ymd }
     }
-    case 'this-week': {
-      const dow = now.getDay()          // 0 = Sun
-      const mon = new Date(now)
-      mon.setDate(now.getDate() - ((dow + 6) % 7))
-      mon.setHours(0, 0, 0, 0)
-      return { start: toYMD(mon), end: today }
+    case 'this-month': {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1)
+      return { start: toYMD(first), end: today }
     }
     case 'last-month': {
       const first = new Date(now.getFullYear(), now.getMonth() - 1, 1)
       const last  = new Date(now.getFullYear(), now.getMonth(), 0)
       return { start: toYMD(first), end: toYMD(last) }
     }
+    case 'this-year':
+      return { start: `${now.getFullYear()}-01-01`, end: today }
     case 'last-year': {
       const y = now.getFullYear() - 1
       return { start: `${y}-01-01`, end: `${y}-12-31` }
@@ -52,8 +52,9 @@ function getPresetRange(preset) {
 const PRESETS = [
   { id: 'today',      label: 'Today' },
   { id: 'yesterday',  label: 'Yesterday' },
-  { id: 'this-week',  label: 'This Week' },
+  { id: 'this-month', label: 'This Month' },
   { id: 'last-month', label: 'Last Month' },
+  { id: 'this-year',  label: 'This Year' },
   { id: 'last-year',  label: 'Last Year' },
 ]
 
@@ -66,16 +67,8 @@ export default function DateRangeFilter({
   onChange,
   loading = false,
 }) {
-  // Track which preset the user last explicitly clicked — never inferred from dates.
-  // Reset to null when the user edits the inputs manually or clears.
   const [activePreset, setActivePreset] = useState(null)
-
-  // Track the last dispatched pair so the useEffect never double-fires
   const lastFiredRef = useRef({ start: null, end: null })
-
-  function isComplete(v) {
-    return v === '' || v.length === 10
-  }
 
   function fire(s, e) {
     if (lastFiredRef.current.start === s && lastFiredRef.current.end === e) return
@@ -83,9 +76,10 @@ export default function DateRangeFilter({
     onChange?.(s, e)
   }
 
-  // Auto-fire when user edits the date inputs directly (both must be complete)
   useEffect(() => {
-    if (!isComplete(startDate) || !isComplete(endDate)) return
+    const sOk = !startDate || startDate.length === 10
+    const eOk = !endDate   || endDate.length   === 10
+    if (!sOk || !eOk) return
     fire(startDate, endDate)
   }, [startDate, endDate])
 
@@ -105,7 +99,6 @@ export default function DateRangeFilter({
     fire('', '')
   }
 
-  // Deactivate preset highlight when user manually changes either date input
   function handleStartChange(val) {
     setActivePreset(null)
     onStartChange?.(val)
@@ -118,10 +111,28 @@ export default function DateRangeFilter({
 
   const hasFilter = startDate || endDate
 
+  // Shared style: makes the date input show ONLY the calendar icon.
+  // We set width to just the icon width and clip the text portion.
+  const dateInputStyle = {
+    border: 'none',
+    background: 'transparent',
+    outline: 'none',
+    padding: 0,
+    margin: 0,
+    // Width of just the calendar icon button (~22px) — text part is clipped
+    width: 22,
+    // Overflow hidden clips the mm/dd/yyyy text
+    overflow: 'hidden',
+    cursor: 'pointer',
+    colorScheme: 'light',
+    // Colour scheme so the icon inherits the theme colour
+    color: 'var(--text-muted)',
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
 
-      {/* ── Preset buttons ── */}
+      {/* ── Preset pills ── */}
       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
         {PRESETS.map(p => (
           <button
@@ -147,7 +158,7 @@ export default function DateRangeFilter({
         ))}
       </div>
 
-      {/* ── From → To inputs ── */}
+      {/* ── From → To row ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <div style={{
           display: 'flex',
@@ -156,27 +167,41 @@ export default function DateRangeFilter({
           background: 'var(--surface2)',
           border: '1px solid var(--border)',
           borderRadius: 8,
-          padding: '4px 10px',
+          padding: '5px 10px',
         }}>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', fontWeight: 500 }}>From</span>
+
+          {/* From */}
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>From</span>
+          <span style={{ fontSize: 13, color: startDate ? 'var(--text)' : 'var(--text-muted)', minWidth: 68, whiteSpace: 'nowrap' }}>
+            {startDate ? startDate.split('-').reverse().join('/') : 'dd/mm/yyyy'}
+          </span>
           <input
             type="date"
             value={startDate}
             max={endDate || undefined}
             onChange={e => handleStartChange(e.target.value)}
-            style={{ border: 'none', background: 'transparent', fontSize: 13, padding: 0, outline: 'none', minWidth: 120, color: 'var(--text)' }}
+            style={dateInputStyle}
             aria-label="Start date"
+            title="Pick start date"
           />
+
           <span style={{ fontSize: 12, color: 'var(--text-muted)', margin: '0 2px' }}>→</span>
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', fontWeight: 500 }}>To</span>
+
+          {/* To */}
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' }}>To</span>
+          <span style={{ fontSize: 13, color: endDate ? 'var(--text)' : 'var(--text-muted)', minWidth: 68, whiteSpace: 'nowrap' }}>
+            {endDate ? endDate.split('-').reverse().join('/') : 'dd/mm/yyyy'}
+          </span>
           <input
             type="date"
             value={endDate}
             min={startDate || undefined}
             onChange={e => handleEndChange(e.target.value)}
-            style={{ border: 'none', background: 'transparent', fontSize: 13, padding: 0, outline: 'none', minWidth: 120, color: 'var(--text)' }}
+            style={dateInputStyle}
             aria-label="End date"
+            title="Pick end date"
           />
+
           {hasFilter && (
             <button
               onClick={handleClear}
@@ -188,6 +213,7 @@ export default function DateRangeFilter({
             </button>
           )}
         </div>
+
         {loading && (
           <span
             className="spin"
