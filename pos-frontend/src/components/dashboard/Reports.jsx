@@ -113,7 +113,7 @@ export default function Reports({ subSection = 'sales-report' }) {
     <div>
       <div className="section-header" style={{ marginBottom: 16 }}>
         <h2>{titles[subSection] || 'Reports'}</h2>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
           {isAdmin && branches.length > 0 && (
             <select
               value={reportBranchId ?? ''}

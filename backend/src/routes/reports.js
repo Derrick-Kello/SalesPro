@@ -170,17 +170,21 @@ router.get("/overview-stats", authenticate, (req, res) => {
 
   return cached(cacheKey, async () => {
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const endOfToday   = new Date(startOfToday); endOfToday.setHours(23, 59, 59, 999);
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfWeek  = new Date(now);
     startOfWeek.setDate(now.getDate() - 6);
     startOfWeek.setHours(0, 0, 0, 0);
 
     const branchFilter = branchId ? `AND "branchId" = ${branchId}` : "";
-    const salesWhere = { createdAt: { gte: startOfMonth }, status: "COMPLETED", ...(branchId ? { branchId } : {}) };
-    const expensesWhere = { date: { gte: startOfMonth }, ...(branchId ? { branchId } : {}) };
+    const salesWhere      = { createdAt: { gte: startOfMonth }, status: "COMPLETED", ...(branchId ? { branchId } : {}) };
+    const salesTodayWhere = { createdAt: { gte: startOfToday, lte: endOfToday }, status: "COMPLETED", ...(branchId ? { branchId } : {}) };
+    const expensesWhere   = { date: { gte: startOfMonth }, ...(branchId ? { branchId } : {}) };
 
     const [
       salesAgg,
+      salesTodayAgg,
       expensesAgg,
       lowStockItems,
       weeklySales,
@@ -190,6 +194,11 @@ router.get("/overview-stats", authenticate, (req, res) => {
     ] = await Promise.all([
       prisma.sale.aggregate({
         where: salesWhere,
+        _sum: { grandTotal: true },
+        _count: { id: true },
+      }),
+      prisma.sale.aggregate({
+        where: salesTodayWhere,
         _sum: { grandTotal: true },
         _count: { id: true },
       }),
@@ -248,16 +257,18 @@ router.get("/overview-stats", authenticate, (req, res) => {
     const actualLowStock = lowStockItems.filter(i => i.quantity <= i.lowStockAlert);
 
     return {
-      totalSales:       salesAgg._sum.grandTotal ?? 0,
-      totalExpenses:    expensesAgg._sum.amount ?? 0,
+      salesToday:        salesTodayAgg._sum.grandTotal ?? 0,
+      transactionsToday: salesTodayAgg._count.id,
+      totalSales:        salesAgg._sum.grandTotal ?? 0,
+      totalExpenses:     expensesAgg._sum.amount ?? 0,
       totalTransactions: salesAgg._count.id,
-      lowStockCount:    actualLowStock.length,
-      lowStockItems:    actualLowStock.slice(0, 10).map(i => ({
+      lowStockCount:     actualLowStock.length,
+      lowStockItems:     actualLowStock.slice(0, 10).map(i => ({
         name: i.product.name, qty: i.quantity, alert: i.lowStockAlert,
       })),
-      weeklyChart:      Object.entries(weeklyMap).map(([date, v]) => ({ date, ...v })),
-      topProducts:      topProductItems,
-      paymentBreakdown: paymentAgg,
+      weeklyChart:       Object.entries(weeklyMap).map(([date, v]) => ({ date, ...v })),
+      topProducts:       topProductItems,
+      paymentBreakdown:  paymentAgg,
     };
   })
   .then(data => res.json(data))

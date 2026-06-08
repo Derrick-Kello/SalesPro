@@ -90,10 +90,10 @@ export default function Overview() {
 
       {/* Stat cards */}
       <div className="stats-grid" style={{ marginBottom: 24 }}>
-        <StatCard icon={DollarSign} label="Sales This Month"      value={fmt(stats?.totalSales ?? 0)}    color="var(--primary)" />
-        <StatCard icon={ShoppingBag} label="Transactions"          value={stats?.totalTransactions ?? 0}                color="var(--success)" />
-        <StatCard icon={TrendingDown} label="Expenses This Month"  value={fmt(stats?.totalExpenses ?? 0)} color="var(--danger)" />
-        <StatCard icon={AlertTriangle} label="Low Stock Alerts"    value={stats?.lowStockCount ?? 0}                    color="var(--warning)" />
+        <StatCard icon={DollarSign}    label="Sales Today"         value={fmt(stats?.salesToday ?? 0)}    color="var(--primary)" />
+        <StatCard icon={ShoppingBag}   label="Transactions Today"  value={stats?.transactionsToday ?? 0}  color="var(--success)" />
+        <StatCard icon={TrendingDown}  label="Expenses This Month" value={fmt(stats?.totalExpenses ?? 0)} color="var(--danger)" />
+        <StatCard icon={AlertTriangle} label="Low Stock Alerts"    value={stats?.lowStockCount ?? 0}      color="var(--warning)" />
       </div>
 
       {/* Charts row */}
