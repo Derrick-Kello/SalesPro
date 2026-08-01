@@ -3,6 +3,13 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
 export default defineConfig({
+  // Lets the app show which build it is running — the quickest way to tell a
+  // stale cached service worker from a genuinely missing feature.
+  define: {
+    __APP_BUILD__: JSON.stringify(
+      new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC',
+    ),
+  },
   plugins: [
     react(),
     VitePWA({

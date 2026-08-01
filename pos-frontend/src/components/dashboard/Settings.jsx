@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { useAlert } from '../../context/AlertContext'
 import { fmtDate } from '../../utils/dateFormat'
+import InstallGuide from '../InstallGuide'
 
 const BUILT_IN_ROLES = ['ADMIN', 'MANAGER', 'CASHIER']
 const BUILT_IN_LABELS = { MANAGER: 'Manager', CASHIER: 'Cashier' }
@@ -380,6 +381,7 @@ export default function Settings() {
           { key: 'users', label: 'Users & Permissions' },
           { key: 'custom-roles', label: 'Custom Roles' },
           { key: 'role-defaults', label: 'Role Defaults' },
+          { key: 'install', label: 'Install App' },
         ].map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             padding: '10px 20px', fontSize: 13, fontWeight: 600, border: 'none', cursor: 'pointer',
@@ -389,6 +391,18 @@ export default function Settings() {
           }}>{t.label}</button>
         ))}
       </div>
+
+      {/* ── Install App Tab ──────────────────────────────────────────────── */}
+      {tab === 'install' && (
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 24 }}>
+          <h3 style={{ margin: '0 0 4px', fontSize: 16 }}>Install SalesPro on this device</h3>
+          <p style={{ margin: '0 0 20px', fontSize: 13, color: 'var(--text-muted)' }}>
+            Open this page on the phone or tablet you want to install on, then follow the steps for
+            that device.
+          </p>
+          <InstallGuide />
+        </div>
+      )}
 
       {/* ── Users & Permissions Tab ──────────────────────────────────────── */}
       {tab === 'users' && (
