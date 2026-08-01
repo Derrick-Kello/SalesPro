@@ -1,7 +1,19 @@
 // Central API helper - all requests go through here.
 // Change VITE_API_URL in .env to point to a different backend.
 
+import { reportReachable, reportUnreachable } from '../offline/connectivity'
+
 export const API_BASE = import.meta.env.VITE_API_URL || '/api'
+
+/** Thrown when the server could not be reached at all (vs. rejecting the request). */
+export class NetworkError extends Error {
+  constructor(cause) {
+    super('No connection to the server')
+    this.name = 'NetworkError'
+    this.isNetworkError = true
+    this.cause = cause
+  }
+}
 
 function getToken() {
   return localStorage.getItem('token')
@@ -38,8 +50,14 @@ async function request(method, path, body, _retries = 0) {
       await new Promise(r => setTimeout(r, 1000 * (_retries + 1)))
       return request(method, path, body, _retries + 1)
     }
-    throw networkErr
+    // fetch threw: the request never reached the server, so a write is safe to
+    // queue and replay. Callers distinguish this from a server rejection.
+    reportUnreachable()
+    throw new NetworkError(networkErr)
   }
+
+  // We got bytes back, so the backend is reachable even if it answers with an error.
+  reportReachable()
 
   const text = await res.text()
 

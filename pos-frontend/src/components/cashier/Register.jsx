@@ -10,6 +10,12 @@ import { Search, ShoppingCart, UserPlus, Trash2, Banknote, CreditCard, Smartphon
 import QRCode from 'react-qr-code'
 import { productDisplayName } from '../../utils/productDisplay'
 import { fmtDateTime } from '../../utils/dateFormat'
+import { cachedGet, describeAge } from '../../offline/refCache'
+import { getRef, putRef } from '../../offline/db'
+import { queueSaleOffline } from '../../offline/saleQueue'
+import { bumpQueueVersion } from '../../offline/queueEvents'
+import useOnlineStatus from '../../hooks/useOnlineStatus'
+import { WifiOff } from 'lucide-react'
 
 const STORE_NAME = 'SalesPro'
 
@@ -104,6 +110,21 @@ export default function Register() {
   const [posTagFilterId, setPosTagFilterId] = useState('')
   const [pendingTagPick, setPendingTagPick] = useState(null)
 
+  /** Catalogue served from the offline cache — prices and stock may have moved since. */
+  const [catalogStale, setCatalogStale] = useState(false)
+  const [catalogCachedAt, setCatalogCachedAt] = useState(null)
+  const [cachedBranchName, setCachedBranchName] = useState('')
+  const online = useOnlineStatus()
+
+  // Learned from sales that reached the server, so offline receipts can still
+  // name the outlet (see branchName below).
+  useEffect(() => {
+    if (!branchId) return
+    getRef(`branch-name:${branchId}`)
+      .then((hit) => { if (hit?.data) setCachedBranchName(hit.data) })
+      .catch(() => {})
+  }, [branchId])
+
   const catalog = Array.isArray(allProducts) ? allProducts : []
 
   function resolveSellTagId(product, explicit) {
@@ -125,8 +146,13 @@ export default function Register() {
   const loadProducts = useCallback(async () => {
     try {
       const params = branchId ? `?branchId=${branchId}` : ''
-      const raw = await api.get(`/products${params}`)
-      setAllProducts(Array.isArray(raw) ? raw : [])
+      const { data, stale, cachedAt } = await cachedGet(
+        `products:${branchId || 'all'}`,
+        `/products${params}`,
+      )
+      setAllProducts(Array.isArray(data) ? data : [])
+      setCatalogStale(stale)
+      setCatalogCachedAt(cachedAt)
     } catch (err) { console.error(err.message) }
   }, [branchId])
 
@@ -140,8 +166,8 @@ export default function Register() {
 
   const loadCustomers = useCallback(async () => {
     try {
-      const raw = await api.get('/customers')
-      setCustomers(Array.isArray(raw) ? raw : [])
+      const { data } = await cachedGet('customers', '/customers')
+      setCustomers(Array.isArray(data) ? data : [])
     } catch (err) { console.error(err.message) }
   }, [])
 
@@ -162,9 +188,8 @@ export default function Register() {
   }, [])
 
   useEffect(() => {
-    api
-      .get('/tags')
-      .then((r) => setAllTags(Array.isArray(r) ? r : []))
+    cachedGet('tags', '/tags')
+      .then(({ data }) => setAllTags(Array.isArray(data) ? data : []))
       .catch(() => setAllTags([]))
   }, [])
 
@@ -513,35 +538,114 @@ export default function Register() {
         return
       }
     }
+    const bodyFull = checkoutMode === 'full'
+    const salePayload = {
+      customerId: customerId || null,
+      items: saleItemsPayload(),
+      discount: Number(discount),
+      tax,
+      shipping: shippingAmt,
+      paymentMethod: payMethod,
+      partialPayment: !bodyFull,
+      amountPaid: bodyFull ? (payMethod === 'CASH' ? Number(amountPaid) : grandTotal) : inst,
+      cashTendered: (!bodyFull && payMethod === 'CASH')
+        ? (partialCashTender === '' ? inst : tenderForPartialCash)
+        : undefined,
+      paymentReference: payRef || null,
+      currency: currency.code,
+      ...(user?.role === 'ADMIN' && branchId ? { branchId } : {}),
+    }
+
     try {
-      const bodyFull = checkoutMode === 'full'
-      const sale = await api.post('/sales', {
-        customerId: customerId || null,
-        items: saleItemsPayload(),
-        discount: Number(discount),
-        tax,
-        shipping: shippingAmt,
-        paymentMethod: payMethod,
-        partialPayment: !bodyFull,
-        amountPaid: bodyFull ? (payMethod === 'CASH' ? Number(amountPaid) : grandTotal) : inst,
-        cashTendered: (!bodyFull && payMethod === 'CASH')
-          ? (partialCashTender === '' ? inst : tenderForPartialCash)
-          : undefined,
-        paymentReference: payRef || null,
-        currency: currency.code,
-        ...(user?.role === 'ADMIN' && branchId ? { branchId } : {}),
-      })
+      const sale = await api.post('/sales', salePayload)
       setLastSale(sale)
       setCheckoutOpen(false)
       setReceiptOpen(true)
       clearCart()
       loadProducts()
+      if (sale.branch?.name && branchId) {
+        setCachedBranchName(sale.branch.name)
+        putRef(`branch-name:${branchId}`, sale.branch.name).catch(() => {})
+      }
     } catch (err) {
-      setCheckoutError(err.message)
+      // Only a genuine network failure is safe to queue. A server rejection
+      // (out of stock, bad price) must surface now, while the customer is
+      // still standing there — queueing it would just fail again later.
+      if (!err.isNetworkError) {
+        setCheckoutError(err.message)
+        return
+      }
+      if (payMethod === 'PAYSTACK') {
+        setCheckoutError('Paystack needs a live connection. Take cash or another method, or retry when back online.')
+        return
+      }
+      try {
+        const entry = await queueSaleOffline(salePayload, {
+          user,
+          branchName: branchName(),
+          customer: selectedCustomer,
+          grandTotal,
+          productsById: Object.fromEntries(catalog.map((p) => [p.id, p])),
+          tagsById: Object.fromEntries(allTags.map((t) => [t.id, t])),
+        })
+        setLastSale(entry.receipt)
+        setCheckoutOpen(false)
+        setReceiptOpen(true)
+        clearCart()
+        applyLocalStockDecrement(salePayload.items)
+        bumpQueueVersion()
+      } catch (queueErr) {
+        // Nothing worked: no server, no local storage. Say so plainly rather
+        // than letting the cashier believe the sale was recorded.
+        setCheckoutError(
+          `Offline and could not save this sale locally (${queueErr.message}). Do not hand over goods — write it down and retry.`,
+        )
+      }
     } finally {
       setProcessing(false)
       submittingRef.current = false
     }
+  }
+
+  /**
+   * Outlet name for an offline receipt. The server supplies it on a normal
+   * sale, but /branches is admin-only so a cashier's till cannot look it up —
+   * instead we remember the name from the last sale that did go through.
+   */
+  function branchName() {
+    return cachedBranchName
+  }
+
+  /**
+   * Keep selling after an offline sale: the server is not there to tell us the
+   * new stock level, so decrement the local view. This is a local estimate and
+   * is replaced by real numbers on the next successful load.
+   */
+  function applyLocalStockDecrement(items) {
+    setAllProducts((prev) =>
+      prev.map((p) => {
+        const lines = items.filter((i) => i.productId === p.id)
+        if (!lines.length) return p
+        const sold = lines.reduce((s, i) => s + Number(i.quantity || 0), 0)
+        const next = { ...p }
+        if (branchId && p.branchInventory?.length) {
+          next.branchInventory = [
+            { ...p.branchInventory[0], quantity: Math.max(0, p.branchInventory[0].quantity - sold) },
+            ...p.branchInventory.slice(1),
+          ]
+        } else if (p.inventory) {
+          next.inventory = { ...p.inventory, quantity: Math.max(0, p.inventory.quantity - sold) }
+        }
+        if (p.tags?.length) {
+          next.tags = p.tags.map((t) => {
+            const line = lines.find((i) => String(i.tagId) === String(t.id))
+            if (!line || t.quantity == null) return t
+            return { ...t, quantity: Math.max(0, Number(t.quantity) - Number(line.quantity || 0)) }
+          })
+        }
+        return next
+      }),
+    )
   }
 
   async function startPaystackCheckout() {
@@ -647,6 +751,32 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
     <div className="pos-layout">
       {/* ── Products Panel ── */}
       <div className="pos-products">
+        {(!online || catalogStale) && (
+          <div
+            role="status"
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              padding: '10px 12px',
+              marginBottom: 10,
+              borderRadius: 10,
+              border: '1px solid var(--warning)',
+              background: 'var(--warning-light)',
+              fontSize: 13,
+              lineHeight: 1.45,
+            }}
+          >
+            <WifiOff size={16} strokeWidth={2} style={{ flexShrink: 0, marginTop: 2, color: 'var(--warning)' }} />
+            <span>
+              <strong>{online ? 'Showing saved catalogue' : 'Offline — sales are being saved on this device'}</strong>
+              {catalogStale && (
+                <> · prices and stock last updated {describeAge(catalogCachedAt)}, so they may have moved.</>
+              )}
+              {!online && !catalogStale && <> · they will sync automatically when the connection returns.</>}
+            </span>
+          </div>
+        )}
         {/* Search */}
         <div className="search-bar">
           <div style={{ position: 'relative', flex: 1 }}>
@@ -1181,11 +1311,33 @@ body { font-family: 'Courier New', monospace; font-size: 12px; width: 72mm; padd
             </div>
             <hr className="receipt-divider" />
             <div className="receipt-meta">
-              <div><strong>Receipt #:</strong> {lastSale.id}</div>
+              <div>
+                <strong>Receipt #:</strong>{' '}
+                {lastSale.id ?? `OFFLINE-${String(lastSale.clientRef || '').slice(-8).toUpperCase()}`}
+              </div>
               <div><strong>Date:</strong> {fmtDateTime(lastSale.createdAt)}</div>
               <div><strong>Cashier:</strong> {lastSale.user.fullName}</div>
               {lastSale.customer && <div><strong>Customer:</strong> {lastSale.customer.name}</div>}
             </div>
+            {lastSale.offlinePending && (
+              <div
+                style={{
+                  border: '1px dashed #000',
+                  padding: '4px 6px',
+                  margin: '6px 0',
+                  fontSize: 10.5,
+                  lineHeight: 1.4,
+                  textAlign: 'center',
+                  fontWeight: 700,
+                }}
+              >
+                RECORDED OFFLINE — AWAITING SYNC
+                <div style={{ fontWeight: 400, marginTop: 2 }}>
+                  Ref {String(lastSale.clientRef || '').slice(-8).toUpperCase()} · a final receipt
+                  number is issued once this till reconnects.
+                </div>
+              </div>
+            )}
             <hr className="receipt-divider" />
             <div className="receipt-items-header">
               <span>Item</span>

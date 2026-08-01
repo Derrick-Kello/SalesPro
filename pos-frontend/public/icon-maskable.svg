@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="SalesPro">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1a7fe0"/>
+      <stop offset="1" stop-color="#0066CC"/>
+    </linearGradient>
+  </defs>
+  <!-- Full-bleed: launchers crop to a circle/squircle, so no rounded corners here. -->
+  <rect width="512" height="512" fill="url(#g)"/>
+  <!-- Artwork kept inside the 80% safe zone so cropping never clips it. -->
+  <g transform="translate(256 256) scale(0.62) translate(-256 -256)">
+    <path d="M146 96h220a16 16 0 0 1 16 16v286l-31.4-22-31.4 22-31.4-22-31.4 22-31.4-22-31.4 22-31.4-22L130 420V112a16 16 0 0 1 16-16z" fill="#fff"/>
+    <rect x="176" y="160" width="160" height="24" rx="12" fill="#0066CC"/>
+    <rect x="176" y="216" width="160" height="18" rx="9" fill="#9CC7F0"/>
+    <rect x="176" y="264" width="112" height="18" rx="9" fill="#9CC7F0"/>
+    <rect x="176" y="312" width="136" height="18" rx="9" fill="#9CC7F0"/>
+  </g>
+</svg>

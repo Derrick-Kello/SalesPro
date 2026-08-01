@@ -5,6 +5,8 @@ import { useCurrency } from '../context/CurrencyContext'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api/client'
 import { LogOut, ShoppingBag, GitBranch, Coins } from 'lucide-react'
+import OfflineStatus from './OfflineStatus'
+import OfflineQueueModal from './OfflineQueueModal'
 
 const ROLE_LABELS = { ADMIN: 'Administrator', MANAGER: 'Manager', CASHIER: 'Cashier' }
 
@@ -21,6 +23,7 @@ export default function Navbar({ extra }) {
   const branchCtx = useBranch()
   const { currency, setCurrency, currencies } = useCurrency()
   const [branches, setBranches] = useState([])
+  const [queueOpen, setQueueOpen] = useState(false)
 
   useEffect(() => {
     if (user?.role === 'ADMIN') {
@@ -41,6 +44,9 @@ export default function Navbar({ extra }) {
 
       <div className="nav-links">
         {extra}
+
+        <OfflineStatus onOpenQueue={() => setQueueOpen(true)} />
+        <OfflineQueueModal open={queueOpen} onClose={() => setQueueOpen(false)} />
 
         {/* Branch selector — ADMIN only */}
         {user?.role === 'ADMIN' && branchCtx && branches.length > 0 && (
