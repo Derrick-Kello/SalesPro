@@ -46,6 +46,10 @@ export default function OfflineStatus({ onOpenQueue }) {
   if (pending) label.push(`${pending} unsynced`)
   if (failed) label.push(`${failed} need${failed === 1 ? 's' : ''} attention`)
 
+  // On a phone the full sentence would overflow the navbar, so it collapses to
+  // the counts. Both render; CSS picks one, so nothing is lost either way.
+  const compact = [pending || null, failed ? `!${failed}` : null].filter(Boolean).join(' ')
+
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
       <button
@@ -66,7 +70,8 @@ export default function OfflineStatus({ onOpenQueue }) {
         }}
       >
         {danger ? <TriangleAlert size={14} strokeWidth={2.2} /> : <CloudOff size={14} strokeWidth={2.2} />}
-        {label.join(' · ')}
+        <span className="offline-chip-full">{label.join(' · ')}</span>
+        {compact && <span className="offline-chip-compact">{compact}</span>}
       </button>
 
       {online && (pending > 0 || failed > 0) && (

@@ -1797,3 +1797,226 @@ body {
 /* ── Spin animation for refresh icon ── */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spin { animation: spin 0.8s linear infinite; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   NATIVE MOBILE / INSTALLED-APP BEHAVIOUR
+   Everything below adapts the existing layout for phones and for the
+   PWA running full screen. No feature is hidden — controls are
+   re-arranged and given touch-sized targets, never removed.
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ── Safe areas ──
+   index.html sets viewport-fit=cover so the app paints edge to edge when
+   installed. Without these insets the navbar would sit under the iPhone
+   notch and the cart total under the home indicator. */
+:root {
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+}
+
+.navbar {
+  padding-top: var(--safe-top);
+  padding-left: max(24px, var(--safe-left));
+  padding-right: max(24px, var(--safe-right));
+  height: calc(var(--navbar-height) + var(--safe-top));
+}
+
+/* Anything measured against the navbar has to account for the inset too. */
+.dashboard-layout { height: calc(100vh - var(--navbar-height) - var(--safe-top)); }
+.pos-layout { height: calc(100vh - var(--navbar-height) - var(--safe-top) - 53px); }
+
+/* Dynamic viewport units: mobile Safari's collapsing URL bar makes 100vh
+   taller than what you can actually see, which cut off the cart footer. */
+@supports (height: 100dvh) {
+  .dashboard-layout { height: calc(100dvh - var(--navbar-height) - var(--safe-top)); }
+  .pos-layout { height: calc(100dvh - var(--navbar-height) - var(--safe-top) - 53px); }
+}
+
+/* Only the phone sidebar is a fixed drawer, so only it needs offsetting —
+   scoped to avoid overriding the desktop flex layout. */
+@media (max-width: 768px) {
+  .sidebar {
+    top: calc(var(--navbar-height) + var(--safe-top));
+    height: calc(100vh - var(--navbar-height) - var(--safe-top));
+    padding-bottom: var(--safe-bottom);
+  }
+  @supports (height: 100dvh) {
+    .sidebar { height: calc(100dvh - var(--navbar-height) - var(--safe-top)); }
+  }
+}
+
+/* ── Native chrome feel ── */
+html {
+  /* Stop iOS enlarging text in landscape. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  /* Kill the grey flash on every tap — the clearest "this is a web page" tell. */
+  -webkit-tap-highlight-color: transparent;
+  /* No rubber-band bounce revealing white behind the app chrome. */
+  overscroll-behavior-y: none;
+}
+
+/* Chrome shouldn't be selectable on touch; content still is. */
+.navbar, .sidebar, .cashier-tabs, .cart-footer, .btn, .badge {
+  -webkit-user-select: none;
+  user-select: none;
+}
+input, textarea, [contenteditable], .data-table, .receipt-print {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Momentum scrolling on every scrollable region. */
+.sidebar, .table-container, .modal-content, .pos-products, .pos-cart, .cart-items {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Installed app: no browser UI to lean on, so lock out accidental zoom-scroll. */
+@media (display-mode: standalone) {
+  body { overscroll-behavior: none; }
+}
+
+/* ── Install button ── */
+.install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1.5px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--primary);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--t), transform var(--t);
+}
+.install-btn:active { transform: scale(0.96); }
+.install-btn:hover { background: var(--blue-mid); }
+
+/* Compact form of the offline chip is phone-only. */
+.offline-chip-compact { display: none; }
+
+/* ── Update bar ── */
+.pwa-update-bar {
+  position: fixed;
+  left: max(16px, var(--safe-left));
+  right: max(16px, var(--safe-right));
+  bottom: calc(16px + var(--safe-bottom));
+  z-index: 9000;
+  margin: 0 auto;
+  max-width: 460px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  font-size: 13.5px;
+}
+
+/* ═══════════════ PHONES ═══════════════ */
+@media (max-width: 768px) {
+  /* iOS zooms the whole page when focusing an input under 16px. That zoom is
+     the single most non-native thing a till can do, and it does not zoom back
+     out. 16px everywhere it matters. */
+  input, select, textarea,
+  .form-group input, .form-group select, .form-group textarea,
+  .search-bar input {
+    font-size: 16px;
+  }
+
+  /* Apple HIG: 44px minimum hit target. Padding grows, type does not, so
+     nothing reflows or gets cut off. */
+  .btn { min-height: 44px; padding: 11px 16px; }
+  .btn-sm { min-height: 38px; padding: 9px 14px; }
+  .sidebar-menu li a { min-height: 46px; }
+  .modal-close { min-width: 44px; min-height: 44px; }
+  .install-btn { min-height: 40px; padding: 8px 14px; }
+
+  /* Table rows are tap targets when they open a detail view. */
+  .data-table td { padding-top: 14px; padding-bottom: 14px; }
+
+  /* —— Navbar: icons only, nothing removed —— */
+  /* Restated because the base safe-area rule above is later in the file and
+     would otherwise widen the phone navbar back to desktop padding. */
+  .navbar {
+    gap: 8px;
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
+  }
+  .nav-links { gap: 6px; display: flex; align-items: center; }
+  .nav-brand { font-size: 15px; }
+  /* The label goes, the button stays. */
+  .install-btn-label { display: none; }
+  .install-btn { padding: 8px; border-radius: 50%; }
+
+  /* Selects shrink to their icon + value rather than disappearing. */
+  .nav-links select { max-width: 104px; font-size: 12.5px; padding: 5px 6px; }
+
+  /* Sign-out collapses to its icon; aria-label keeps it announced. */
+  .nav-signout-label { display: none; }
+  .nav-signout { padding: 9px 11px; }
+
+  /* Offline chip shows counts only — tapping still opens the full queue. */
+  .offline-chip-full { display: none; }
+  .offline-chip-compact { display: inline; }
+
+  /* —— Bottom sheet modals —— */
+  .modal-content {
+    max-height: 88vh;
+    padding-bottom: var(--safe-bottom);
+  }
+  @supports (height: 100dvh) {
+    .modal-content { max-height: 88dvh; }
+  }
+  /* Grab handle, so the sheet reads as a sheet. */
+  .modal-header::before {
+    content: '';
+    position: absolute;
+    top: 7px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 38px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--border);
+  }
+  .modal-header { position: relative; padding-top: 18px; }
+
+  /* —— POS register —— */
+  /* The checkout button lives here; it must clear the home indicator or it
+     becomes unreachable on a notched iPhone. */
+  .cart-actions { padding-bottom: calc(14px + var(--safe-bottom)); }
+  .pos-products { padding: 12px; }
+
+  /* —— Fixed bars clear the home indicator —— */
+  .pwa-update-bar { bottom: calc(12px + var(--safe-bottom)); }
+}
+
+/* ═══════════════ SMALL PHONES ═══════════════ */
+@media (max-width: 480px) {
+  /* Brand shrinks to its mark; the icon still identifies the app. */
+  .nav-brand-label { display: none; }
+  .nav-links select { max-width: 84px; }
+  .navbar {
+    padding-left: max(12px, var(--safe-left));
+    padding-right: max(12px, var(--safe-right));
+  }
+  /* Product grid stays usable rather than collapsing to one huge column. */
+  .product-grid { grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; }
+}
+
+/* Landscape phones: the navbar eats too much of a short viewport. */
+@media (max-height: 460px) and (orientation: landscape) and (max-width: 900px) {
+  .pos-products { height: auto; flex: 1; }
+  .pos-cart { height: auto; flex: 1; }
+  .pos-layout { grid-template-columns: 1fr 300px; height: auto; min-height: 0; }
+}

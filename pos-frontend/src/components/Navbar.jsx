@@ -7,6 +7,7 @@ import { api } from '../api/client'
 import { LogOut, ShoppingBag, GitBranch, Coins } from 'lucide-react'
 import OfflineStatus from './OfflineStatus'
 import OfflineQueueModal from './OfflineQueueModal'
+import InstallButton from './InstallButton'
 
 const ROLE_LABELS = { ADMIN: 'Administrator', MANAGER: 'Manager', CASHIER: 'Cashier' }
 
@@ -39,12 +40,13 @@ export default function Navbar({ extra }) {
         <div className="nav-brand-icon">
           <ShoppingBag size={17} color="white" strokeWidth={2.2} />
         </div>
-        SalesPro
+        <span className="nav-brand-label">SalesPro</span>
       </div>
 
       <div className="nav-links">
         {extra}
 
+        <InstallButton />
         <OfflineStatus onOpenQueue={() => setQueueOpen(true)} />
         <OfflineQueueModal open={queueOpen} onClose={() => setQueueOpen(false)} />
 
@@ -86,8 +88,8 @@ export default function Navbar({ extra }) {
           </div>
         </div>
 
-        <button onClick={handleLogout} className="btn btn-ghost btn-sm" title="Sign out">
-          <LogOut size={14} strokeWidth={2.2} /> Sign Out
+        <button onClick={handleLogout} className="btn btn-ghost btn-sm nav-signout" title="Sign out" aria-label="Sign out">
+          <LogOut size={14} strokeWidth={2.2} /> <span className="nav-signout-label">Sign Out</span>
         </button>
       </div>
     </nav>
