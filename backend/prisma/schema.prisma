@@ -273,6 +273,9 @@ model Sale {
   grandTotal    Float
   status        SaleStatus    @default(COMPLETED)
   createdAt     DateTime      @default(now())
+  /// Idempotency key for sales rung up offline in the PWA and replayed on sync.
+  /// Null for sales created while online.
+  clientRef     String?       @unique
 
   user      User      @relation(fields: [userId], references: [id])
   customer  Customer? @relation(fields: [customerId], references: [id])

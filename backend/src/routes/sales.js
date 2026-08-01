@@ -45,6 +45,55 @@ function augmentSaleJson(sale) {
   return { ...sale, paidToDate: paid, balanceDue };
 }
 
+/** Full sale payload as returned by checkout — shared by create and idempotent replay. */
+function fetchCompleteSale(id) {
+  return prisma.sale.findUnique({
+    where: { id },
+    include: {
+      saleItems: {
+        include: {
+          product: { select: { id: true, name: true, price: true, category: true, barcode: true } },
+          tag: { select: { id: true, name: true, group: true } },
+        },
+      },
+      user: { select: { fullName: true, username: true } },
+      customer: true,
+      branch: { select: { name: true } },
+      payment: true,
+    },
+  });
+}
+
+/**
+ * Offline sales carry a client-generated idempotency key so a replay after a
+ * flaky sync cannot ring the same sale up twice. Anything that is not a
+ * plausible UUID is rejected rather than silently ignored — silently dropping
+ * the key would turn a retry into a duplicate sale.
+ */
+const CLIENT_REF_RE = /^[a-zA-Z0-9_-]{8,64}$/;
+
+/** Offline sales may backdate to when they were actually rung up, within limits. */
+const MAX_BACKDATE_MS = 14 * 24 * 60 * 60 * 1000;
+
+function resolveOfflineCreatedAt(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) {
+    const err = new Error("Invalid offlineCreatedAt");
+    err.status = 400;
+    throw err;
+  }
+  const now = Date.now();
+  // Clock skew on the till should not park sales in the future.
+  if (at.getTime() > now) return new Date(now);
+  if (now - at.getTime() > MAX_BACKDATE_MS) {
+    const err = new Error("Offline sale is too old to sync (older than 14 days)");
+    err.status = 400;
+    throw err;
+  }
+  return at;
+}
+
 const router = express.Router();
 router.use(authenticate);
 
@@ -176,7 +225,42 @@ router.post("/", async (req, res) => {
     currency: saleCurrency,
     partialPayment,
     cashTendered: cashTenderedRaw,
+    clientRef: clientRefRaw,
+    offlineCreatedAt,
   } = req.body;
+
+  const clientRef =
+    clientRefRaw == null || String(clientRefRaw).trim() === ""
+      ? null
+      : String(clientRefRaw).trim();
+  if (clientRef && !CLIENT_REF_RE.test(clientRef)) {
+    return res.status(400).json({ error: "Invalid clientRef" });
+  }
+
+  // Idempotent replay: the till already rang this sale up offline and is
+  // retrying because it never saw our response. Hand back the original.
+  // Guarded — an unhandled rejection here would take the process down.
+  let backdatedAt;
+  try {
+    if (clientRef) {
+      const existing = await prisma.sale.findUnique({
+        where: { clientRef },
+        select: { id: true },
+      });
+      if (existing) {
+        const sale = await fetchCompleteSale(existing.id);
+        return res.status(200).json({ ...augmentSaleJson(sale), duplicate: true });
+      }
+    }
+    backdatedAt = resolveOfflineCreatedAt(offlineCreatedAt);
+  } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
+    console.error("[POST /sales] replay lookup", err.message);
+    return res.status(500).json({ error: "Sale processing failed" });
+  }
+  if (backdatedAt && !clientRef) {
+    return res.status(400).json({ error: "offlineCreatedAt requires a clientRef" });
+  }
 
   if (!items || items.length === 0) {
     return res.status(400).json({ error: "Cart is empty" });
@@ -195,6 +279,9 @@ router.post("/", async (req, res) => {
   }
 
   const partial = Boolean(partialPayment);
+  if (clientRef && paymentMethod === "PAYSTACK") {
+    return res.status(400).json({ error: "Paystack sales cannot be queued offline — the payment must be verified live." });
+  }
   if (partial && paymentMethod === "PAYSTACK") {
     return res.status(400).json({ error: "Paystack does not support partial payment at checkout. Choose full payment or another method." });
   }
@@ -352,6 +439,8 @@ router.post("/", async (req, res) => {
           grandTotal: grandTotalVal,
           status: saleStatus,
           saleItems: { create: saleItemsData },
+          ...(clientRef ? { clientRef } : {}),
+          ...(backdatedAt ? { createdAt: backdatedAt } : {}),
         },
         select: { id: true },
       });
@@ -394,27 +483,24 @@ router.post("/", async (req, res) => {
       return newSale;
     }, transactionOptions);
 
-    const completeSale = await prisma.sale.findUnique({
-      where: { id: sale.id },
-      include: {
-        saleItems: {
-          include: {
-            product: { select: { id: true, name: true, price: true, category: true, barcode: true } },
-            tag: { select: { id: true, name: true, group: true } },
-          },
-        },
-        user: { select: { fullName: true, username: true } },
-        customer: true,
-        branch: { select: { name: true } },
-        payment: true,
-      },
-    });
+    const completeSale = await fetchCompleteSale(sale.id);
 
     res.status(201).json(augmentSaleJson(completeSale));
     invalidate("overview-stats");
   } catch (err) {
     if (err.status === 400) {
       return res.status(400).json({ error: err.message });
+    }
+    // Two syncs raced on the same queued sale; the loser reads back the winner's row.
+    if (err.code === "P2002" && clientRef) {
+      const existing = await prisma.sale.findUnique({
+        where: { clientRef },
+        select: { id: true },
+      });
+      if (existing) {
+        const sale = await fetchCompleteSale(existing.id);
+        return res.status(200).json({ ...augmentSaleJson(sale), duplicate: true });
+      }
     }
     console.error(err);
     res.status(500).json({ error: "Sale processing failed" });
