@@ -10,7 +10,6 @@ import {
   TableSelectCell,
   TableSelectHeader,
 } from '../table/TableColumns'
-import { Download, Printer } from 'lucide-react'
 import { fmtDateTime } from '../../utils/dateFormat'
 
 function filterRows(rows, search, fields) {
@@ -34,7 +33,7 @@ function TableSearchInput({ value, onChange, placeholder }) {
   )
 }
 
-export default function WarehouseReportSection({ data, fmt, title, onDownloadCsv, onPrint, onRefresh }) {
+export default function WarehouseReportSection({ data, fmt, title, onRefresh }) {
   const { can } = usePermissions()
   const { showError, showSuccess } = useAlert()
   const canDeleteTransfers = can('transfers.delete')
@@ -111,48 +110,6 @@ export default function WarehouseReportSection({ data, fmt, title, onDownloadCsv
 
   return (
     <>
-      <div
-        className="no-print-warehouse-report"
-        style={{
-          display: 'flex',
-          gap: 10,
-          flexWrap: 'wrap',
-          alignItems: 'stretch',
-          marginBottom: 20,
-        }}
-      >
-        <div
-          className="card"
-          style={{
-            flex: '1 1 280px',
-            padding: '14px 16px',
-            borderRadius: 12,
-            border: '1px solid var(--border)',
-            background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)',
-          }}
-        >
-          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>Export</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              onClick={onDownloadCsv}
-            >
-              <Download size={16} strokeWidth={2} /> Download CSV
-            </button>
-            <button
-              type="button"
-              className="btn btn-outline"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              onClick={onPrint}
-            >
-              <Printer size={16} strokeWidth={2} /> Print / Save PDF
-            </button>
-          </div>
-        </div>
-      </div>
-
       <div id="warehouse-report-export-root">
         <style>{`
           @media print {

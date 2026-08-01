@@ -5,13 +5,16 @@ import { useBranch } from '../../context/BranchContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import WarehouseReportSection from './WarehouseReportSection'
-import { fmtDateTime } from '../../utils/dateFormat'
+import { fmtDate } from '../../utils/dateFormat'
 import DateRangeFilter from '../DateRangeFilter'
+import { FileDown, FileText } from 'lucide-react'
+import { makeMoney, downloadReportCsv, downloadReportPdf } from '../../utils/reportExport'
+import { buildReportModel } from '../../utils/reportModels'
 
 export default function Reports({ subSection = 'sales-report' }) {
   const { user } = useAuth()
   const { selectedBranchId } = useBranch()
-  const { fmt } = useCurrency()
+  const { fmt, currency } = useCurrency()
   const isAdmin = user?.role === 'ADMIN'
   const isManager = user?.role === 'MANAGER'
 
@@ -29,11 +32,13 @@ export default function Reports({ subSection = 'sales-report' }) {
       ? (isAdmin ? (reportBranchId ?? null) : (isManager ? user?.branchId : null))
       : (isAdmin ? (reportBranchId ?? selectedBranchId) : (isManager ? user?.branchId : null))
 
+  // Admins pick a branch from this list; managers only need it so exports can
+  // name their branch (the picker below stays admin-only).
   useEffect(() => {
-    if (isAdmin) {
+    if (isAdmin || isManager) {
       api.get('/branches').then(setBranches).catch(() => {})
     }
-  }, [isAdmin])
+  }, [isAdmin, isManager])
 
   useEffect(() => {
     if (subSection === 'warehouse-report') {
@@ -109,6 +114,35 @@ export default function Reports({ subSection = 'sales-report' }) {
     'warehouse-report': 'Warehouse Report',
   }
 
+  const canExport = !loading && !!data && !data.error
+
+  function currentModel() {
+    const branchLabel = effectiveBranchId
+      ? (branches.find(b => b.id === effectiveBranchId)?.name ?? `Branch #${effectiveBranchId}`)
+      : 'All branches'
+    const warehouseLabel = reportWarehouseId
+      ? (warehouses.find(w => w.id === reportWarehouseId)?.name ?? `Warehouse #${reportWarehouseId}`)
+      : 'All warehouses'
+
+    const meta = [
+      `Period: ${startDate || endDate ? `${startDate ? fmtDate(startDate) : 'start'} → ${endDate ? fmtDate(endDate) : 'today'}` : 'All time'}`,
+      `Branch: ${branchLabel}`,
+    ]
+    if (subSection === 'warehouse-report') meta.push(`Warehouse: ${warehouseLabel}`)
+    if (subSection === 'payments') meta[0] = 'Period: last 7 days'
+    if (subSection === 'stock-alerts') meta[0] = 'Period: current stock levels'
+    meta.push(`Amounts in ${currency?.code || ''}`.trim())
+    meta.push(`Exported by: ${user?.fullName || user?.username || '—'}`)
+
+    return buildReportModel({
+      type: subSection,
+      data,
+      title: titles[subSection] || 'Report',
+      meta,
+      money: makeMoney(currency?.code),
+    })
+  }
+
   return (
     <div>
       <div className="section-header" style={{ marginBottom: 16 }}>
@@ -150,6 +184,28 @@ export default function Reports({ subSection = 'sales-report' }) {
               loading={loading}
             />
           )}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              disabled={!canExport}
+              title={canExport ? 'Download this report as CSV' : 'Nothing to export yet'}
+              onClick={() => downloadReportCsv(currentModel())}
+            >
+              <FileDown size={16} strokeWidth={2} /> CSV
+            </button>
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              disabled={!canExport}
+              title={canExport ? 'Download this report as PDF' : 'Nothing to export yet'}
+              onClick={() => downloadReportPdf(currentModel())}
+            >
+              <FileText size={16} strokeWidth={2} /> PDF
+            </button>
+          </div>
         </div>
       </div>
 
@@ -160,61 +216,6 @@ export default function Reports({ subSection = 'sales-report' }) {
       )}
     </div>
   )
-}
-
-function csvEscape(cell) {
-  const s = cell == null ? '' : String(cell)
-  return `"${s.replace(/"/g, '""')}"`
-}
-
-function buildWarehouseCsv(d, fmt) {
-  const lines = [`Warehouse Report (${new Date().toISOString().slice(0, 10)})`, '']
-  lines.push(csvEscape('By warehouse'))
-  lines.push([csvEscape('Warehouse'), csvEscape('Branch'), csvEscape('SKUs'), csvEscape('Pieces'), csvEscape('Cost value'), csvEscape('Note')].join(','))
-  for (const s of (d.summaries || [])) {
-    lines.push([
-      csvEscape(s.warehouseName), csvEscape(s.branchName ?? ''), s.distinctSkus, s.totalPieces,
-      csvEscape(fmt(s.totalCostValue ?? 0)), csvEscape((s.stockNote || '').replace(/\n/g, ' ')),
-    ].join(','))
-  }
-  const te = d.transferEconomics
-  lines.push('')
-  lines.push(csvEscape('Transfer economics (filtered period × scope)'))
-  if (te) {
-    lines.push([csvEscape('Transfer rows (shown)'), te.totalLines].join(','))
-    lines.push([csvEscape('Recorded cost sum (movement value)'), csvEscape(fmt(te.totalCostRecorded ?? 0))].join(','))
-    lines.push([csvEscape('Cost arriving at warehouses (dest = WH)'), csvEscape(fmt(te.inboundToWarehouseCost ?? 0))].join(','))
-    lines.push([csvEscape('Cost leaving warehouses (origin = WH)'), csvEscape(fmt(te.outboundFromWarehouseCost ?? 0))].join(','))
-    lines.push([csvEscape('WH → WH'), csvEscape(fmt(te.warehouseToWarehouseCost ?? 0))].join(','))
-    lines.push([csvEscape('WH → Branch'), csvEscape(fmt(te.warehouseToBranchCost ?? 0))].join(','))
-    lines.push([csvEscape('Branch → WH'), csvEscape(fmt(te.branchToWarehouseCost ?? 0))].join(','))
-  }
-  lines.push('')
-  lines.push(csvEscape('Transfers'))
-  lines.push([
-    csvEscape('When'), csvEscape('Product'), csvEscape('Qty'), csvEscape('Route'),
-    csvEscape('Cost'), csvEscape('From'), csvEscape('To'), csvEscape('By'), csvEscape('Note'),
-  ].join(','))
-  for (const t of (d.transferHistory || [])) {
-    const when = t.createdAt ? fmtDateTime(t.createdAt) : ''
-    lines.push([
-      csvEscape(when),
-      csvEscape(t.productName), t.quantity, csvEscape(t.routeHint || ''),
-      csvEscape(fmt(t.totalCostRecorded ?? 0)),
-      csvEscape(t.fromLabel), csvEscape(t.toLabel), csvEscape(t.transferredByName),
-      csvEscape((t.note || '').replace(/\n/g, ' ')),
-    ].join(','))
-  }
-  return lines.join('\n')
-}
-
-function downloadWarehouseReport(data, fmt) {
-  const blob = new Blob([buildWarehouseCsv(data, fmt)], { type: 'text/csv;charset=utf-8' })
-  const a = document.createElement('a')
-  a.href = URL.createObjectURL(blob)
-  a.download = `warehouse-report-${Date.now()}.csv`
-  a.click()
-  URL.revokeObjectURL(a.href)
 }
 
 function ReportBody({ type, data, fmt, title = '', onRefresh }) {
@@ -384,8 +385,6 @@ function ReportBody({ type, data, fmt, title = '', onRefresh }) {
         data={data}
         fmt={fmt}
         title={title}
-        onDownloadCsv={() => downloadWarehouseReport(data, fmt)}
-        onPrint={() => window.print()}
         onRefresh={onRefresh}
       />
     )
