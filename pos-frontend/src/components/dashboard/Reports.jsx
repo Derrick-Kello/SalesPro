@@ -5,6 +5,8 @@ import { useBranch } from '../../context/BranchContext'
 import { useCurrency } from '../../context/CurrencyContext'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import WarehouseReportSection from './WarehouseReportSection'
+import SalesReportSection from './SalesReportSection'
+import Modal from '../Modal'
 import { fmtDate } from '../../utils/dateFormat'
 import DateRangeFilter from '../DateRangeFilter'
 import { FileDown, FileText } from 'lucide-react'
@@ -26,6 +28,8 @@ export default function Reports({ subSection = 'sales-report' }) {
   const [warehouses, setWarehouses] = useState([])
   const [reportBranchId, setReportBranchId] = useState(null)
   const [reportWarehouseId, setReportWarehouseId] = useState(null)
+  const [exportFormat, setExportFormat] = useState(null)
+  const [exportLayout, setExportLayout] = useState('both')
 
   const effectiveBranchId =
     subSection === 'warehouse-report'
@@ -116,7 +120,7 @@ export default function Reports({ subSection = 'sales-report' }) {
 
   const canExport = !loading && !!data && !data.error
 
-  function currentModel() {
+  function currentModel(layout = 'both') {
     const branchLabel = effectiveBranchId
       ? (branches.find(b => b.id === effectiveBranchId)?.name ?? `Branch #${effectiveBranchId}`)
       : 'All branches'
@@ -140,7 +144,22 @@ export default function Reports({ subSection = 'sales-report' }) {
       title: titles[subSection] || 'Report',
       meta,
       money: makeMoney(currency?.code),
+      layout,
     })
+  }
+
+  // The sales report ships in two shapes (size grids / size lines), so it asks
+  // what to include first; every other report downloads straight away.
+  function startExport(format) {
+    if (subSection === 'sales-report') { setExportFormat(format); return }
+    download(format, 'both')
+  }
+
+  function download(format, layout) {
+    const model = currentModel(layout)
+    if (format === 'csv') downloadReportCsv(model)
+    else downloadReportPdf(model)
+    setExportFormat(null)
   }
 
   return (
@@ -191,7 +210,7 @@ export default function Reports({ subSection = 'sales-report' }) {
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               disabled={!canExport}
               title={canExport ? 'Download this report as CSV' : 'Nothing to export yet'}
-              onClick={() => downloadReportCsv(currentModel())}
+              onClick={() => startExport('csv')}
             >
               <FileDown size={16} strokeWidth={2} /> CSV
             </button>
@@ -201,7 +220,7 @@ export default function Reports({ subSection = 'sales-report' }) {
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
               disabled={!canExport}
               title={canExport ? 'Download this report as PDF' : 'Nothing to export yet'}
-              onClick={() => downloadReportPdf(currentModel())}
+              onClick={() => startExport('pdf')}
             >
               <FileText size={16} strokeWidth={2} /> PDF
             </button>
@@ -214,23 +233,79 @@ export default function Reports({ subSection = 'sales-report' }) {
       {!loading && data && !data.error && (
         <ReportBody type={subSection} data={data} fmt={fmt} title={titles[subSection]} onRefresh={() => loadWithDates()} />
       )}
+
+      {exportFormat && (
+        <ExportLayoutModal
+          format={exportFormat}
+          layout={exportLayout}
+          onLayout={setExportLayout}
+          onClose={() => setExportFormat(null)}
+          onDownload={() => download(exportFormat, exportLayout)}
+        />
+      )}
     </div>
   )
 }
 
-function ReportBody({ type, data, fmt, title = '', onRefresh }) {
-  if (type === 'sales-report') return (
-    <div className="table-container">
-      <table className="data-table">
-        <thead><tr><th>Product</th><th>Category</th><th>Qty Sold</th><th>Revenue</th></tr></thead>
-        <tbody>
-          {data.length
-            ? data.map(p => <tr key={p.productId}><td>{p.name}</td><td><span className="badge badge-info">{p.category}</span></td><td>{p.totalQuantity}</td><td style={{ fontWeight: 700 }}>{fmt(p.totalRevenue)}</td></tr>)
-            : <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '32px 0' }}>No data</td></tr>}
-        </tbody>
-      </table>
-    </div>
+const EXPORT_LAYOUTS = [
+  { id: 'grids', label: 'Size grids only', hint: 'One block per product and colour, sizes across the top — the client format.' },
+  { id: 'lines', label: 'Size line table only', hint: 'One row per size with quantity and revenue, for reconciling figures.' },
+  { id: 'both', label: 'Both', hint: 'Size grids first, then the size line table.' },
+]
+
+function ExportLayoutModal({ format, layout, onLayout, onClose, onDownload }) {
+  return (
+    <Modal
+      title={`Download Sales Report (${format.toUpperCase()})`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" onClick={onDownload}>
+            <FileDown size={15} strokeWidth={2.5} /> Download
+          </button>
+        </>
+      }
+    >
+      <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        Choose what goes into the file. The summary figures are always included.
+      </p>
+      {EXPORT_LAYOUTS.map((opt) => (
+        <label
+          key={opt.id}
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            padding: '12px 14px',
+            marginBottom: 8,
+            borderRadius: 10,
+            cursor: 'pointer',
+            border: `1.5px solid ${layout === opt.id ? 'var(--primary)' : 'var(--border)'}`,
+            background: layout === opt.id ? 'var(--primary-light)' : 'var(--surface)',
+          }}
+        >
+          <input
+            type="radio"
+            name="export-layout"
+            checked={layout === opt.id}
+            onChange={() => onLayout(opt.id)}
+            style={{ marginTop: 3, width: 'auto' }}
+          />
+          <span>
+            <span style={{ display: 'block', fontWeight: 700, fontSize: 13.5 }}>{opt.label}</span>
+            <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.45 }}>
+              {opt.hint}
+            </span>
+          </span>
+        </label>
+      ))}
+    </Modal>
   )
+}
+
+function ReportBody({ type, data, fmt, title = '', onRefresh }) {
+  if (type === 'sales-report') return <SalesReportSection data={data} fmt={fmt} />
 
   if (type === 'payments') {
     const chartData = (data.dailyBreakdown || []).map(d => ({ ...d, revenue: parseFloat(d.revenue.toFixed(2)) }))

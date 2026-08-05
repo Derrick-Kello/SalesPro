@@ -3,30 +3,78 @@
  * Reports tab. Kept free of React so it can be unit-tested directly.
  */
 import { fmtDate, fmtDateTime } from './dateFormat'
+import { groupProductsBySize } from './sizeBreakdown'
 
 const num = (n) => Number(n) || 0
 const sum = (rows, pick) => rows.reduce((acc, r) => acc + num(pick(r)), 0)
 const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim()
+const pieces = (n) => `${num(n)} ${num(n) === 1 ? 'pc' : 'pcs'}`
 
 /**
  * Turn a loaded report payload into the shared export model
  * (see utils/reportExport.js). Used by both the CSV and the PDF download.
  */
-export function buildReportModel({ type, data, title, meta, money }) {
+export function buildReportModel({ type, data, title, meta, money, layout = 'both' }) {
   const model = { title, filename: type, meta, sections: [] }
 
   if (type === 'sales-report') {
     const rows = Array.isArray(data) ? data : []
+    const groups = groupProductsBySize(
+      rows.map((p) => ({
+        name: p.name,
+        category: p.category,
+        quantity: p.totalQuantity,
+        value: p.totalRevenue,
+      })),
+    )
+    const totalQty = sum(rows, (p) => p.totalQuantity)
+    const totalRevenue = sum(rows, (p) => p.totalRevenue)
+
+    // The size grids are wide but short; keep the whole report on portrait pages.
+    model.orientation = 'portrait'
+
     model.sections.push({
-      kind: 'table',
-      title: 'Products sold',
-      columns: ['#', 'Product', 'Category', 'Qty sold', 'Revenue'],
-      align: ['right', 'left', 'left', 'right', 'right'],
-      rows: rows.map((p, i) => [i + 1, p.name, p.category ?? '—', num(p.totalQuantity), money(p.totalRevenue)]),
-      footer: rows.length
-        ? ['', 'Total', '', sum(rows, (p) => p.totalQuantity), money(sum(rows, (p) => p.totalRevenue))]
-        : null,
+      kind: 'stats',
+      title: 'Summary',
+      items: [
+        { label: 'Products sold', value: groups.length },
+        { label: 'Size lines', value: sum(groups, (g) => g.cells.length) },
+        { label: 'Pieces sold', value: totalQty },
+        { label: 'Revenue', value: money(totalRevenue) },
+      ],
     })
+
+    // 'grids' = the size blocks only, 'lines' = the flat table only, 'both'.
+    const wantGrids = layout !== 'lines'
+    const wantLines = layout !== 'grids'
+    model.filename = layout === 'both' ? type : `${type}-${layout}`
+
+    if (wantGrids) model.sections.push({
+      kind: 'matrix',
+      title: 'Quantity sold by product and size',
+      groups: groups.map((g) => ({
+        title: g.product,
+        subtitle: [g.category, pieces(g.totalQuantity), money(g.totalValue).text]
+          .filter(Boolean)
+          .join(' · '),
+        cells: g.cells.map((c) => ({ label: c.label, value: num(c.quantity) })),
+        total: num(g.totalQuantity),
+      })),
+    })
+
+    if (wantLines) {
+      const detail = groups.flatMap((g) =>
+        g.cells.map((c) => [g.product, c.label, g.category ?? '—', num(c.quantity), money(c.value)]),
+      )
+      model.sections.push({
+        kind: 'table',
+        title: 'Size lines (detail)',
+        columns: ['#', 'Product', 'Size', 'Category', 'Qty sold', 'Revenue'],
+        align: ['right', 'left', 'left', 'left', 'right', 'right'],
+        rows: detail.map((r, i) => [i + 1, ...r]),
+        footer: detail.length ? ['', 'Total', '', '', totalQty, money(totalRevenue)] : null,
+      })
+    }
     return model
   }
 
